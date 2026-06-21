@@ -165,6 +165,37 @@ table with per-package justification is in [CLAUDE.md](CLAUDE.md). Summary:
 Two paths, same image. The deploy contract carries the health-cmd, devices, volumes, restart
 policy, and — critically — the **port-publish set** (Principle 7). Never hand-roll `podman run`.
 
+### DEPLOY CONTRACT — the host claudebox MUST ASK the operator at spin-up
+
+fedora-desktop is **operator-parameterised** and is **NOT auto-deployed on day-0**. When the
+maintainer asks the host (`fedora-bootstrap`) claudebox to spin up fedora-desktop, the host
+claudebox **MUST ask the operator for** the following (never hardcode, never invent), then deploy
+with them via `run.sh` / the Quadlet:
+
+1. **Lineage + variant** — `xrdp` (proven; `DESKTOP_ENV` ∈ `xfce`/`mate`/`lxqt`/`kde`) is the
+   deployable default; `grd` / `krdp` are **EXPERIMENTAL** (Wayland headless host-validation pending).
+2. **`WEB_GATEWAY`** — `guacamole` (**recommended for the public door** — arbitrary-length strong
+   password) or `novnc` (the public door is then weak 8-char VNC VncAuth).
+3. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port).
+4. **Secrets, per door:**
+   - **`RDP_PW`** — **strong** (`core`'s system/RDP password; the RDP door + the web SSO).
+   - **`GUAC_PW`** — **strong** (the public web login, guacamole gateway).  *or*  **`RFB_PW`** —
+     the novnc public web auth (**weak**, 8-char VncAuth — prefer guacamole for a public door).
+   - `RFB_PW` (optional under guacamole) — arms the tailnet-only `:5900` VNC mirror.
+
+### Access model (public surface = the web port only)
+
+| Door | Exposure | Reach |
+|---|---|---|
+| **web** | **PUBLIC** (the only public port) | `https://<public-ip>:${WEB_PORT}/` (TLS; `WEB_PORT` default 8443) |
+| **ssh** | **tailnet-only** | `ssh core@<tailnet-ip>` (Tailscale SSH, keyless) or ssh-key over the tailnet |
+| **mosh** | **tailnet-only** | over the tailnet ssh |
+| **RDP** | **tailnet-only** | `<tailnet-ip>:3389` (mstsc / Windows App; `RDP_PW`) |
+| **VNC** | **tailnet-only** | `<tailnet-ip>:5900` (only if `RFB_PW` set) |
+
+ssh/mosh/RDP/VNC are never published **and** are dropped on non-`lo`/non-`tailscale0` interfaces by
+the in-container `nft` guard — tailnet-only by *construction*, so a future `-p` slip can't expose them.
+
 ### Runtime secrets (Principle 5 — never in a layer)
 
 | Var | Required | What it is |

@@ -80,20 +80,22 @@ Volume=fedora-desktop-home:/home/core
 Volume=fedora-desktop-state:/var/lib/tailscale
 Volume=fedora-desktop-cert:/var/lib/guac-cert
 
-# PUBLIC ports — the ONLY doors to the internet (see run.sh ACCESS MODEL):
-#   8443/tcp        -> Guacamole web over TLS (hardened browser desktop door)
-#   4444/tcp        -> container :22 sshd (key-only)
-#   61001-62000/udp -> mosh (over the key-auth ssh)
-# RDP :3389 and VNC :5900 are TAILNET-ONLY and are DELIBERATELY NOT published —
-# they are reachable only over the tailnet IP (tailscaled inside the container).
-# Do NOT add PublishPort lines for 3389/5900.
+# PUBLIC port — the web gateway is the ONLY door to the internet (see run.sh
+# ACCESS MODEL). To change the public host port, edit the LEFT side below (the
+# container side stays 8443); the run.sh path uses WEB_PORT for the same purpose.
+# ssh (:22), mosh (UDP 61001-62000), RDP (:3389) and VNC (:5900) are TAILNET-ONLY:
+# DELIBERATELY NOT published (reached only over the tailnet IP / Tailscale SSH) and
+# dropped on non-tailscale0 interfaces by the in-container nft guard.
+# Do NOT add PublishPort lines for 22 / 3389 / 5900 / mosh.
 PublishPort=8443:8443
-PublishPort=4444:22
-PublishPort=61001-62000:61001-62000/udp
 
-# Runtime secrets. Preferred: podman secrets surfaced as env (uncomment after
-# `podman secret create fedora-desktop-<name> -`). RDP_PW + GUAC_PW are REQUIRED
-# (entrypoint fails fast); RFB_PW + TS_AUTHKEY are optional.
+# Runtime secrets — supplied per-door at spin-up (the host claudebox ASKS the
+# operator; see README DEPLOY CONTRACT). Preferred: podman secrets surfaced as env
+# (uncomment after `podman secret create fedora-desktop-<name> -`).
+#   RDP_PW   REQUIRED — core's system/RDP password (STRONG; the RDP door + the web SSO).
+#   GUAC_PW  REQUIRED for the guacamole gateway — the PUBLIC web password (STRONG).
+#   RFB_PW   REQUIRED for the novnc gateway (the public web auth = weak VNC VncAuth —
+#            prefer guacamole for a public door); OPTIONAL for guacamole (tailnet VNC).
 #   Secret=fedora-desktop-rdp-pw,type=env,target=RDP_PW
 #   Secret=fedora-desktop-guac-pw,type=env,target=GUAC_PW
 #   Secret=fedora-desktop-rfb-pw,type=env,target=RFB_PW

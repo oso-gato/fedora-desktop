@@ -243,20 +243,22 @@ else
 fi
 
 # ---- tailnet-only by CONSTRUCTION (defense-in-depth) ------------------------
-# RDP :3389 + VNC :5900 bind 0.0.0.0 inside the container; only lo (guacd /
-# websockify loopback) and tailscale0 (native RDP/VNC clients) should reach them.
-# run.sh already keeps them out of the publish set (by convention) — this nft rule
-# makes "tailnet-only" true BY CONSTRUCTION so a future `-p 3389` slip can't expose
-# password-only RDP to the public internet. Own table (never collides with
-# fail2ban's); `iifname` matches by name so it loads before tailscale0 exists;
-# best-effort (needs NET_ADMIN), never fatal to PID 1.
+# The web gateway (:8443) is the ONLY public door. ssh (:22), mosh (UDP
+# 61001-62000), RDP (:3389) and VNC (:5900) are TAILNET-ONLY: run.sh publishes only
+# the web port, and THIS nft rule drops those ports on every interface except lo
+# (loopback: guacd/websockify) and tailscale0 (the tailnet) — so a future `-p 22`
+# / `-p 3389` slip can't expose key/password auth to the public internet. The web
+# port is NOT dropped (policy accept). Own table (never collides with fail2ban's);
+# `iifname` matches by name so it loads before tailscale0 exists; best-effort
+# (needs NET_ADMIN), never fatal to PID 1.
 nft -f - <<'NFT' 2>/dev/null || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)"
 table inet fd_tailnet_guard {
   chain input {
     type filter hook input priority -10; policy accept;
     iifname "lo" accept
     iifname "tailscale0" accept
-    tcp dport { 3389, 5900 } drop
+    tcp dport { 22, 3389, 5900 } drop
+    udp dport 61001-62000 drop
   }
 }
 NFT

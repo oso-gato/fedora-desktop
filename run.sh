@@ -4,30 +4,35 @@
 # Containerfile HEALTHCHECK), the tun/fuse devices, --shm-size, the restart
 # policy, the runtime secrets, and — critically — the PORT PUBLISH SET.
 #
-#   RDP_PW='…'  (required) core's RDP/system password. xrdp authenticates via PAM;
-#               the guacamole gateway single-signs-on into the LOCAL RDP with it.
-#   GUAC_PW='…' (guacamole gateway) the Guacamole web-login password (user 'core')
-#               at https://<host>:8443/guacamole/.
-#   RFB_PW='…'  (novnc gateway: REQUIRED — the noVNC web-door password at
-#               https://<host>:8443/vnc.html; guacamole gateway: optional — arms the
-#               :5900 tailnet VNC mirror). VncAuth — only the first 8 chars count.
-#   TS_AUTHKEY  (optional) unattended tailnet join.
-#   IMAGE       (optional) defaults to the local build.
+# SECRETS (per door — supplied at spin-up; the host claudebox MUST ASK the operator
+# for these, never hardcode them — see "DEPLOY CONTRACT" in README.md):
+#   RDP_PW='…'  (REQUIRED) core's system/RDP password — the RDP door (TAILNET-ONLY)
+#               AND, for the guacamole gateway, the loopback RDP the web door SSO's
+#               into. Use a STRONG password (it is core's login).
+#   GUAC_PW='…' (guacamole gateway — REQUIRED) the PUBLIC web-login password. This
+#               is the only auth on the only public door → use a STRONG password.
+#   RFB_PW='…'  (novnc gateway → REQUIRED, it IS the public web-door auth; guacamole
+#               gateway → OPTIONAL, arms the :5900 TAILNET VNC mirror). VNC VncAuth
+#               is WEAK (only the first 8 chars count) — fine for the TAILNET-only
+#               VNC, but for a PUBLIC door prefer guacamole (GUAC_PW) over novnc.
+#   WEB_PORT    (optional) host port for the public web door. DEFAULT 8443.
+#   TS_AUTHKEY  (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
-#   RDP_PW='…' GUAC_PW='…' [RFB_PW='…'] [TS_AUTHKEY=tskey-…] [IMAGE=…] ./run.sh
+#   WEB_GATEWAY=guacamole RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [TS_AUTHKEY=…] ./run.sh
+#   WEB_GATEWAY=novnc     RDP_PW='…' RFB_PW='…'  [WEB_PORT=8443] [TS_AUTHKEY=…] ./run.sh
 #
 # ACCESS MODEL (load-bearing — do NOT widen the publish set):
-#   PUBLIC internet doors (the ONLY -p publishes):
-#     * 8443/tcp  -> the web gateway over TLS  (Guacamole or noVNC — the hardened browser door)
-#     * 4444/tcp  -> container :22 sshd       (key-only; keys synced from
-#                    github.com/oso-gato.keys at every start)
-#     * 61001-62000/udp -> mosh               (roams over the same key-auth ssh)
-#   TAILNET-ONLY (deliberately NOT published — reachable only over the tailnet IP):
-#     * 3389/tcp  RDP   (native clients: Windows App on iOS/Android, mstsc)
-#     * 5900/tcp  VNC   (the optional RFB_PW same-session mirror)
-#   Password-auth (RDP/VNC/Guacamole login) therefore never crosses the public
-#   internet except inside the TLS-terminated Guacamole door. Tailscale SSH
-#   (keyless) on the tailnet IP is the primary maintenance path.
+#   PUBLIC internet door — the ONLY -p publish:
+#     * ${WEB_PORT}->8443/tcp  the web gateway over TLS (Guacamole/noVNC). Changeable
+#                  at spin-up via WEB_PORT (default 8443). This is the sole public surface.
+#   TAILNET-ONLY (NEVER published; reachable only over the tailnet IP, and dropped on
+#   non-tailscale0/non-loopback by an in-container nft guard — true by construction):
+#     * 22/tcp    ssh   — Tailscale SSH (keyless, tailnet identity) or ssh-key over the tailnet
+#     * mosh (udp)      — over the tailnet ssh
+#     * 3389/tcp  RDP   — native clients (mstsc / Windows App), login core / RDP_PW
+#     * 5900/tcp  VNC   — the optional RFB_PW same-session mirror
+#   So the ONLY thing exposed to the public internet is the TLS web gateway; ssh/mosh/
+#   RDP/VNC are tailnet-only. Tailscale SSH on the tailnet IP is the primary maintenance path.
 #
 # Session survives disconnects (KillDisconnected=false) — reconnect over RDP/web
 # and your apps are still open.
@@ -47,6 +52,10 @@ case "$WEB_GATEWAY" in
 esac
 IMAGE="${IMAGE:-localhost/fedora-desktop:latest}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"; GUAC_PW="${GUAC_PW:-}"; RFB_PW="${RFB_PW:-}"
+# WEB_PORT — the web gateway is the ONLY public door; its host port is changeable
+# at spin-up (DEFAULT 8443). Everything else — ssh, mosh, RDP, VNC — is TAILNET-ONLY
+# (never published; reached over the tailnet IP / Tailscale SSH).
+WEB_PORT="${WEB_PORT:-8443}"
 
 # Secrets reach the entrypoint via a bind-mounted, 0600 secrets.env — NOT `podman
 # -e`, which would persist RDP_PW/GUAC_PW in `podman inspect` + /proc/1/environ for
@@ -72,9 +81,7 @@ podman run -d --name fedora-desktop \
     -v fedora-desktop-home:/home/core \
     -v fedora-desktop-state:/var/lib/tailscale \
     -v fedora-desktop-cert:/var/lib/guac-cert \
-    -p 8443:8443 \
-    -p 4444:22 \
-    -p 61001-62000:61001-62000/udp \
+    -p ${WEB_PORT}:8443 \
     --health-cmd "bash -c '[ \$(curl -sk -o /dev/null -w %{http_code} ${HEALTH_URL}) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/${BACKEND_PORT}'" \
     --health-interval 30s --health-timeout 5s --health-retries 3 --health-start-period 60s \
     "$IMAGE"
@@ -85,14 +92,15 @@ echo "If no TS_AUTHKEY was given: podman logs -f fedora-desktop and open the"
 echo "ACTION REQUIRED login.tailscale.com link (one-time per state volume)."
 echo
 echo "Reach it:"
+echo "  web  (PUBLIC, the only public door)"
 if [ "$WEB_GATEWAY" = "guacamole" ]; then
-  echo "  web   https://<public-ip-or-tailnet-ip>:8443/guacamole/   (login: core / GUAC_PW)"
+  echo "    https://<public-ip>:${WEB_PORT}/guacamole/   (login: core / GUAC_PW — use a STRONG password)"
 else
-  echo "  web   https://<public-ip-or-tailnet-ip>:8443/vnc.html      (noVNC — password: RFB_PW)"
+  echo "    https://<public-ip>:${WEB_PORT}/vnc.html      (noVNC — password: RFB_PW; NOTE: VNC VncAuth is"
+  echo "    weak/8-char — prefer WEB_GATEWAY=guacamole for a public door)"
 fi
-echo "  ssh   ssh -p 4444 core@<public-ip>          (key auth — github.com/oso-gato.keys)"
-echo "  ssh   ssh core@<tailnet-ip>                 (Tailscale SSH, keyless)"
-echo "  mosh  mosh -p 61001:62000 --ssh='ssh -p 4444' core@<public-ip>"
-echo "  RDP   <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"
-echo "  VNC   <tailnet-ip>:5900   (TAILNET-ONLY — only if RFB_PW was set; mirrors the RDP session)"
+echo "  ssh  ssh core@<tailnet-ip>                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
+echo "  mosh mosh --ssh='ssh' core@<tailnet-ip>    (over the tailnet — TAILNET-ONLY)"
+echo "  RDP  <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"
+echo "  VNC  <tailnet-ip>:5900   (TAILNET-ONLY — only if RFB_PW was set; mirrors the RDP session)"
 echo "Desktop terminal -> 'claude' to reach the in-box agent. All ssh/mosh land in tmux 'main'."
