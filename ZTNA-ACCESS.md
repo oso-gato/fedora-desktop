@@ -73,8 +73,11 @@ Each entry is `label host [port] [user]` (`;`-separated). Guacamole shows a tile
 **Auth for the SSH tiles** — two Principle-5-clean options, no secret baked into any layer:
 - **Preferred — keyless Tailscale-SSH:** guacd connects to the host's tailnet IP; tailscaled
   brokers auth by the desktop's tailnet identity (the target must allow it in the tailnet SSH ACL).
-  No key on the desktop. *(Needs host-validation: the guacd→Tailscale-SSH path is assembly-built
-  here but not yet exercised against a live tailnet.)*
+  No key on the desktop. Host-key verification is a non-issue: guacd does **no** host-key
+  verification by default (Guacamole L1 manual — omitting `host-key`/`ssh_known_hosts` ⇒ no
+  verification), so the dynamic tailnet IPs connect with no prompt and no pinned `known_hosts`.
+  *(One host-validation item remains: whether guacd's libssh2 completes Tailscale-SSH's "none"-auth
+  without Guacamole prompting for a password — if it prompts, use the key fallback below.)*
 - **Fallback — runtime key:** `FLEET_SSH_KEY=/path/to/key ./run.sh` bind-mounts a private key to
   `/etc/fedora-desktop/fleet_ssh_key` (read-only, never in an image layer); applied to every tile.
 
