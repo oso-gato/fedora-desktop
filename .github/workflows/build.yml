@@ -1,0 +1,222 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Monthly --no-cache rebuild on the 15th at 04:00 UTC. The in-container
+    # claudebox already refreshes claude-code DAILY from Anthropic's `latest`
+    # channel, so the base only needs to pick up upstream RPM updates (Fedora,
+    # tailscale, distrobox, the desktop/app repos: Microsoft, 1Password, plus a
+    # fresh Obsidian AppImage + the pinned Apache/rclone artifacts). Monthly is
+    # plenty. The HOST-side image refresh respects an in-box session lock so this
+    # cron doesn't kill mid-flight work (see fedora-bootstrap).
+    - cron: "0 4 15 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+  id-token: write  # OIDC for cosign keyless signing
+
+jobs:
+  # ==========================================================================
+  # CONTROL-PLANE DIFF-GUARD (per policy/CLAUDE.md "THE PROMOTION GATE").
+  #
+  # The promotion gate's MECHANICAL enforcement lives in the box (the managed
+  # PreToolUse hook + managed-settings). This job is the CI-side backstop: it
+  # FAILS any PR that touches a guardrail / control-plane file UNLESS the PR
+  # carries an explicit waiver label (`control-plane-approved`). It makes a
+  # control-plane change impossible to land silently — a reviewer must (a) see
+  # it isolated and (b) apply the label by hand. Mirrors the law's rule that
+  # control-plane/guardrail changes are STANDALONE, single-purpose, never
+  # bundled, and only land on explicit approval.
+  #
+  # Runs only on pull_request (a push to main has already passed review +
+  # carried the label, or is the maintainer's own self-deploy promotion).
+  # ==========================================================================
+  control-plane-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect control-plane / guardrail changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Guardrail / control-plane file globs — the exact classes the law
+          # names: policy, managed-settings, the promotion-gate hook, every
+          # Quadlet, CI itself, the key-sync helper, run.sh, and the box-rebuild
+          # control machinery. A diff touching ANY of these is "control-plane".
+          PATTERNS='
+          ^policy/
+          ^.github/workflows/
+          (^|/)managed-settings\.json$
+          (^|/).*\.container$
+          (^|/)run\.sh$
+          (^|/)sync-authorized-keys\.sh$
+          (^|/)gate-push\.sh$
+          (^|/)box-rebuild\.sh$
+          (^|/)claudebox-assemble\.sh$
+          (^|/).*sudoers.*$
+          '
+          # Build a single ERE from the non-empty lines.
+          ERE=$(printf '%s\n' "$PATTERNS" | sed '/^[[:space:]]*$/d' | paste -sd'|' -)
+          echo "Using control-plane ERE: $ERE"
+
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files in this PR:"
+          echo "$CHANGED"
+
+          HITS=$(printf '%s\n' "$CHANGED" | grep -E "$ERE" || true)
+          if [ -n "$HITS" ]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "files<<EOF"
+              echo "$HITS"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce the waiver label on control-plane changes
+        if: steps.detect.outputs.touched == 'true'
+        env:
+          # Evaluated at workflow trigger time against the PR's labels array.
+          # `contains(array, item)` is an exact element match — robust against
+          # label names with spaces/punctuation (no string-split needed).
+          HAS_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'control-plane-approved') }}
+        run: |
+          set -euo pipefail
+          echo "::group::Control-plane / guardrail files touched by this PR"
+          cat <<'FILES'
+          ${{ steps.detect.outputs.files }}
+          FILES
+          echo "::endgroup::"
+
+          if [ "$HAS_WAIVER" = "true" ]; then
+            echo "Waiver label 'control-plane-approved' present — control-plane change is explicitly approved."
+            exit 0
+          fi
+
+          echo "::error title=Control-plane change without waiver::This PR edits guardrail / control-plane files (listed above) but does NOT carry the 'control-plane-approved' label."
+          cat <<'MSG'
+
+          ────────────────────────────────────────────────────────────────────
+          CONTROL-PLANE GUARD FAILED
+
+          This PR touches a guardrail / control-plane file (policy/**,
+          managed-settings.json, .github/workflows/**, a *.container Quadlet,
+          run.sh, sync-authorized-keys.sh, the promotion-gate hook, or the
+          box-rebuild control machinery).
+
+          Per policy/CLAUDE.md "THE PROMOTION GATE", such a change MUST be:
+            * STANDALONE and single-purpose (never bundled with a feature change),
+            * explicitly approved by the maintainer.
+
+          To land it: a maintainer reviews the isolated diff and applies the
+          'control-plane-approved' label, then re-runs this check. The label is
+          the deliberate, human, per-PR waiver — there is no auto-bypass.
+          ────────────────────────────────────────────────────────────────────
+          MSG
+          exit 1
+
+  # ==========================================================================
+  # BUILD + COSIGN-SIGN + PUSH to ghcr.io/oso-gato/fedora-desktop.
+  #
+  # On pull_request: BUILD-ONLY validation (push: false, no registry write) and
+  # gated behind the control-plane-guard so a guardrail PR can't even build
+  # without its waiver. On push to main / cron / dispatch: build, push, sign.
+  # ==========================================================================
+  build:
+    needs: control-plane-guard
+    # `needs` would skip this job if control-plane-guard is skipped (it only
+    # runs on pull_request). always() + an explicit success/skip check keeps the
+    # push/cron/dispatch paths building while still blocking on a FAILED guard.
+    if: always() && (needs.control-plane-guard.result == 'success' || needs.control-plane-guard.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Compute tags
+        id: meta
+        run: |
+          echo "date=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # PRINCIPLE 2(c) mechanical backstop: every executable on $PATH in the built
+      # image must be owned by an rpm, except the repo's own COPY'd wrappers. This
+      # is what makes the "no loose binary / tarball-on-PATH" rule a CHECK, not just
+      # prose — a smuggled class-(c) loose binary fails the build.
+      - name: No-loose-binary backstop (Principle 2c)
+        run: |
+          docker build -t fd-loosecheck -f Containerfile .
+          docker run --rm --entrypoint bash fd-loosecheck -c '
+            allow="/usr/local/bin/entrypoint.sh /usr/local/bin/claude /usr/local/bin/claudebox-rebuild"
+            bad=0
+            IFS=:
+            for d in $PATH; do
+              [ -d "$d" ] || continue
+              for f in "$d"/*; do
+                [ -f "$f" ] && [ -x "$f" ] || continue
+                case " $allow " in *" $f "*) continue ;; esac
+                rpm -qf "$f" >/dev/null 2>&1 || { echo "NON-RPM ON PATH: $f"; bad=1; }
+              done
+            done
+            [ "$bad" = 0 ] || { echo "::error::loose non-rpm binary on PATH (Principle 2c)"; exit 1; }
+            echo "backstop OK: every PATH binary is rpm-owned or an allowlisted wrapper"
+          '
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          # PRs validate the build only — never push a PR image to the registry.
+          push: ${{ github.event_name != 'pull_request' }}
+          # --no-cache on the monthly cron so RPMs + the Obsidian AppImage refresh.
+          no-cache: ${{ github.event_name == 'schedule' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fedora-desktop:latest
+            ghcr.io/${{ github.repository_owner }}/fedora-desktop:${{ steps.meta.outputs.date }}
+            ghcr.io/${{ github.repository_owner }}/fedora-desktop:${{ steps.meta.outputs.sha }}
+
+      # Keyless cosign signing via GitHub Actions OIDC. Signs the IMMUTABLE
+      # manifest digest (not the mutable tags); the signature attaches to the
+      # registry as an OCI artifact next to the image. The host's policy.json
+      # flips from `insecureAcceptAnything` to `sigstoreSigned` (pinned to this
+      # CI OIDC identity) is Arthur's one-time item #2 in policy/CLAUDE.md —
+      # until then the signature is an audit trail, not an enforced gate.
+      - name: Sign image with cosign
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/fedora-desktop
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
