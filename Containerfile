@@ -36,19 +36,15 @@ ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
 #   podman build --build-arg DESKTOP_ENV=mate -t fedora-desktop:mate-xrdp .
 ARG DESKTOP_ENV=xfce
 
-# Web-gateway selector (the SOLE public :8443 browser door, fronting the same
-# Xorg :10 session):
-#   guacamole (default) = Apache Guacamole — richest web (H.264/GFX, audio,
-#                         clipboard, file-transfer); one class-(c) .war.
-#   novnc               = noVNC + websockify — ALL class-(a), zero waivers;
-#                         VNC-quality web. e.g. --build-arg WEB_GATEWAY=novnc
-ARG WEB_GATEWAY=guacamole
-
+# Web gateway: Apache Guacamole ONLY (the SOLE public :8443 browser door, fronting
+# the same Xorg :10 session). noVNC was removed fleet-wide — the web door is a
+# PUBLIC (non-tailnet) door and noVNC's 8-char VNC VncAuth is unacceptable there;
+# Guacamole authenticates with a strong password + brute-force lockout (auth-ban).
 ENV LANG=en_US.UTF-8
 
 COPY install.sh /tmp/install.sh
 RUN GUAC_VERSION="${GUAC_VERSION}" GUAC_GPG_FP="${GUAC_GPG_FP}" \
-    DESKTOP_ENV="${DESKTOP_ENV}" WEB_GATEWAY="${WEB_GATEWAY}" \
+    DESKTOP_ENV="${DESKTOP_ENV}" \
     bash /tmp/install.sh && rm /tmp/install.sh
 
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh

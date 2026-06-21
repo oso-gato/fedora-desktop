@@ -61,8 +61,8 @@ container on any host.
 Every fedora-desktop image runs **fully headless** — no monitor, GPU, or local login seat is
 ever needed for it to work. The desktop is a *virtual* display rendered in software (llvmpipe):
 the **xrdp** lineage via `xorgxrdp`'s headless Xorg server, the **grd** lineage via
-`mutter --headless` / GRD's headless session. This holds for every desktop environment, every
-web gateway, and every lineage (incl. any future KDE-Wayland/KRdp variant); a variant that
+`mutter --headless` / GRD's headless session. This holds for every desktop environment and
+every lineage (incl. any future KDE-Wayland/KRdp variant); a variant that
 requires a physical display is a defect, not an option.
 
 ## Build Principles (binding)
@@ -150,7 +150,8 @@ cloud is rclone-only.
 | 1password-cli | apps | b | 1Password CLI (`op`) — scripted secret retrieval. Same 1Password repo |
 | rclone | sync | c | the ONLY cloud-sync engine (NON-vault Google Drive + OneDrive; mount + delete-guarded bisync). Pinned developer rpm `RCLONE_VERSION` (no abraunegg `onedrive` daemon) |
 | Obsidian | apps | c | the vault editor — primary knowledge-work interface. Developer AppImage, latest-at-build, sha256 logged → `/opt/obsidian` + a `.desktop` (no rpm exists) |
-| guacamole.war | remote-access | c | the Guacamole webapp on :8443. Official Apache `.war` pinned by `GUAC_VERSION`, converted javax→jakarta with Apache's `jakartaee-migration` (Fedora ships only Tomcat 10.1). No rpm exists |
+| guacamole.war | remote-access | c | the Guacamole webapp on :8443. Official Apache `.war` pinned by `GUAC_VERSION`, GPG-verified against the pinned Apache key (`GUAC_GPG_FP`), converted javax→jakarta with Apache's `jakartaee-migration` (Fedora ships only Tomcat 10.1). No rpm exists |
+| guacamole-auth-ban | remote-access | c | brute-force lockout on the PUBLIC :8443 door — a second Apache Guacamole `.jar` extension (same `GUAC_VERSION`, same pinned key `GUAC_GPG_FP`, same fetch+GPG-verify+extract pattern) dropped into `/etc/guacamole/extensions/`. What makes a single strong `GUAC_PW` a defensible public door (a password with no lockout is brute-forceable). No rpm exists |
 | jakartaee-migration | (build tool) | c | Apache's own converter (pinned `JEEMIG_VERSION`) used at build time to make `guacamole.war` Tomcat-10-compatible; not installed into the image |
 
 ### Box packages
@@ -174,14 +175,14 @@ with them via `run.sh` / the Quadlet:
 
 1. **Lineage + variant** — `xrdp` (proven; `DESKTOP_ENV` ∈ `xfce`/`mate`/`lxqt`/`kde`) is the
    deployable default; `grd` / `krdp` are **EXPERIMENTAL** (Wayland headless host-validation pending).
-2. **`WEB_GATEWAY`** — `guacamole` (**recommended for the public door** — arbitrary-length strong
-   password) or `novnc` (the public door is then weak 8-char VNC VncAuth).
-3. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port).
-4. **Secrets, per door:**
+2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
+   web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
+   non-tailnet door demands strong auth and noVNC's 8-char VncAuth is unacceptable there).
+3. **Secrets, per door:**
    - **`RDP_PW`** — **strong** (`core`'s system/RDP password; the RDP door + the web SSO).
-   - **`GUAC_PW`** — **strong** (the public web login, guacamole gateway).  *or*  **`RFB_PW`** —
-     the novnc public web auth (**weak**, 8-char VncAuth — prefer guacamole for a public door).
-   - `RFB_PW` (optional under guacamole) — arms the tailnet-only `:5900` VNC mirror.
+   - **`GUAC_PW`** — **strong** (the public web login; the Guacamole gateway is the only public
+     door, hardened by the `guacamole-auth-ban` brute-force lockout).
+   - `RFB_PW` (optional) — arms the **tailnet-only** `:5900` native-VNC mirror (not a gateway choice).
 
 ### Access model (public surface = the web port only)
 
@@ -201,8 +202,8 @@ the in-container `nft` guard — tailnet-only by *construction*, so a future `-p
 | Var | Required | What it is |
 |---|---|---|
 | `RDP_PW` | **yes** | `core`'s system/RDP password. The entrypoint `chpasswd`'s it and Guacamole single-signs-on into the local RDP session with it |
-| `GUAC_PW` | **yes** | the Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`) |
-| `RFB_PW` | no | arms the same-session VNC mirror on :5900 (tailnet-only; VncAuth — only first 8 chars effective) |
+| `GUAC_PW` | **yes** | the public Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`). Use a STRONG one — the `guacamole-auth-ban` extension adds brute-force lockout on this, the only public door |
+| `RFB_PW` | no | **OPTIONAL** — arms the same-session native-VNC mirror on :5900 (tailnet-only; VncAuth — only first 8 chars effective). Not a gateway choice |
 | `TS_AUTHKEY` | no | unattended tailnet join (else the join is interactive — open the printed login URL once) |
 
 The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.

@@ -2,22 +2,25 @@
 # fedora-desktop — KRDP lineage first-boot config (systemd oneshot, runs ONCE).
 # ============================================================================
 # Seeds core's password, syncs key-only ssh, mints TLS, configures KRdp (RDP) +
-# krfb (VNC) + the per-WEB_GATEWAY web door, and leaves the headless Plasma
+# krfb (VNC) + the Apache Guacamole web door, and leaves the headless Plasma
 # Wayland session + the claudebox to core's lingering systemd --user manager.
 # HEADLESS — no monitor/GPU/seat required.
 #
 # Secrets reach this oneshot via the unit's EnvironmentFile (run.sh.krdp writes
 # /etc/fedora-desktop/secrets.env from the podman -e vars before this runs, OR
 # podman passes them into PID 1's env which the unit imports).
+#
+# Required: RDP_PW (core system + KRdp RDP password) + GUAC_PW (the PUBLIC
+# Guacamole web-login password — the only auth on the only public door; brute-force
+# lockout is enforced by the baked guacamole-auth-ban extension). RFB_PW is
+# OPTIONAL: it sets the krfb VNC password for the tailnet-only :5900 mirror; when
+# unset, krfb falls back to RDP_PW (parity with the xrdp lineage's :5900 head).
 set -eu
-WEB_GATEWAY="$(cat /etc/fedora-desktop/web-gateway 2>/dev/null || echo guacamole)"
 : "${RDP_PW:?RDP_PW must be set (core system + KRdp RDP password) — see run.sh.krdp}"
-case "$WEB_GATEWAY" in
-  guacamole) : "${GUAC_PW:?GUAC_PW must be set (Guacamole web-login password) — see run.sh.krdp}"
-             VNC_PW="$RDP_PW" ;;   # krfb VNC is an optional tailnet mirror, RDP_PW-based
-  novnc)     : "${RFB_PW:?RFB_PW must be set (krfb VNC password = noVNC web-door auth) — see run.sh.krdp}"
-             VNC_PW="$RFB_PW" ;;   # krfb VNC IS the public web door (fronted by websockify)
-esac
+: "${GUAC_PW:?GUAC_PW must be set (the PUBLIC Guacamole web-login password) — see run.sh.krdp}"
+# krfb VNC :5900 is the TAILNET-ONLY native VNC mirror — armed by RFB_PW when set,
+# else RDP_PW (VncAuth is weak/8-char — fine since :5900 is tailnet-only + loopback).
+VNC_PW="${RFB_PW:-$RDP_PW}"
 
 # ---- core's system/KRdp password (runtime only — never in a layer) -----------
 echo "core:${RDP_PW}" | chpasswd
@@ -31,9 +34,8 @@ runuser -u core -- bash -c '
     else rm -f "$t"; fi'
 
 # ---- TLS material on the cert volume ---------------------------------------
-# KRdp's RDP requires TLS (PEM cert+key). The web door's TLS differs by gateway:
-# guacamole -> Tomcat PKCS12 keystore; novnc -> websockify PEM. All persist on
-# /var/lib/guac-cert.
+# KRdp's RDP requires TLS (PEM cert+key); the Guacamole web door's TLS is the
+# Tomcat PKCS12 keystore (minted below). All persist on /var/lib/guac-cert.
 install -d -m 0751 /var/lib/guac-cert   # 0751: core traverses the tomcat-owned dir to read its RDP key
 if [ ! -f /var/lib/guac-cert/krdp-cert.pem ]; then
     openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=fedora-desktop-krdp" \
@@ -41,17 +43,16 @@ if [ ! -f /var/lib/guac-cert/krdp-cert.pem ]; then
     chown core:core /var/lib/guac-cert/krdp-*.pem; chmod 600 /var/lib/guac-cert/krdp-key.pem
 fi
 
-if [ "$WEB_GATEWAY" = "guacamole" ]; then
-    # ---- Guacamole web user-mapping: core/GUAC_PW -> KRdp's LOOPBACK RDP (TLS) -
-    # Web-door audio OFF by default (low-bandwidth knowledge-work desktop; audio is
-    # a continuous push stream). ENABLE_AUDIO=true restores it. Guacamole's RDP
-    # lever is `disable-audio` (audio is ON unless set) — `enable-audio` is a no-op.
-    if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
-        RDP_AUDIO_PARAM='<!-- audio enabled (libguac-client-rdp default) -->'
-    else
-        RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
-    fi
-    cat > /etc/guacamole/user-mapping.xml <<EOF
+# ---- Guacamole web user-mapping: core/GUAC_PW -> KRdp's LOOPBACK RDP (TLS) -----
+# Web-door audio OFF by default (low-bandwidth knowledge-work desktop; audio is
+# a continuous push stream). ENABLE_AUDIO=true restores it. Guacamole's RDP
+# lever is `disable-audio` (audio is ON unless set) — `enable-audio` is a no-op.
+if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
+    RDP_AUDIO_PARAM='<!-- audio enabled (libguac-client-rdp default) -->'
+else
+    RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
+fi
+cat > /etc/guacamole/user-mapping.xml <<EOF
 <user-mapping>
   <authorize username="core" password="${GUAC_PW}">
     <connection name="fedora-desktop-krdp">
@@ -68,32 +69,19 @@ if [ "$WEB_GATEWAY" = "guacamole" ]; then
   </authorize>
 </user-mapping>
 EOF
-    chown tomcat:tomcat /etc/guacamole/user-mapping.xml; chmod 600 /etc/guacamole/user-mapping.xml
-    if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
-        keytool -genkeypair -alias guac -keyalg RSA -keysize 2048 -validity 3650 \
-            -dname "CN=fedora-desktop-krdp" -storetype PKCS12 \
-            -keystore /var/lib/guac-cert/keystore.p12 -storepass container-local
-        chown tomcat:tomcat /var/lib/guac-cert/keystore.p12; chmod 640 /var/lib/guac-cert/keystore.p12
-    fi
-else
-    # ---- noVNC: TLS PEM for websockify's :8443 listener (core-owned) ----------
-    # (The websockify SYSTEM unit was enabled at build by install-krdp.sh; it
-    # bridges :8443 -> krfb's loopback VNC :5900. krfb's VNC password = RFB_PW,
-    # set in the krfb config below.)
-    if [ ! -f /var/lib/guac-cert/novnc-cert.pem ]; then
-        runuser -u core -- openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-            -subj "/CN=fedora-desktop-krdp" \
-            -keyout /var/lib/guac-cert/novnc-key.pem \
-            -out   /var/lib/guac-cert/novnc-cert.pem
-        chmod 600 /var/lib/guac-cert/novnc-key.pem; chmod 644 /var/lib/guac-cert/novnc-cert.pem
-    fi
+chown tomcat:tomcat /etc/guacamole/user-mapping.xml; chmod 600 /etc/guacamole/user-mapping.xml
+if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
+    keytool -genkeypair -alias guac -keyalg RSA -keysize 2048 -validity 3650 \
+        -dname "CN=fedora-desktop-krdp" -storetype PKCS12 \
+        -keystore /var/lib/guac-cert/keystore.p12 -storepass container-local
+    chown tomcat:tomcat /var/lib/guac-cert/keystore.p12; chmod 640 /var/lib/guac-cert/keystore.p12
 fi
 
 # ---- KRdp (RDP) + krfb (VNC) + headless session under core's systemd --user ---
 # KRdp serves :3389 (Guacamole fronts it on loopback; native RDP clients reach it
 # on the tailnet) — bound 0.0.0.0 inside the container, :3389 is NEVER published
-# publicly. krfb-virtualmonitor serves :5900 (noVNC bridges on loopback; native
-# VNC viewers on the tailnet), armed in BOTH gateways (parity with grd). BOTH
+# publicly. krfb-virtualmonitor serves the native VNC :5900 (TAILNET-ONLY + loopback;
+# native VNC viewers reach it on the tailnet — NEVER published publicly). BOTH
 # servers attach to a RUNNING KWin Wayland session via the xdg-desktop-portal-kde
 # RemoteDesktop/ScreenCast portal + kpipewire — KRdp CANNOT create a session
 # itself. Unlike GNOME's GRD (turnkey `grdctl --headless`), KDE ships NO supported
@@ -145,9 +133,9 @@ ln -sf /usr/lib/systemd/user/app-org.kde.krdpserver.service \
     "$KRDP_WANTS/app-org.kde.krdpserver.service"
 chown -h core:core "$KRDP_WANTS/app-org.kde.krdpserver.service"
 
-# ---- krfb (VNC :5900) as a systemd --user unit — armed in BOTH gateways -------
-# Parity with grd (VNC enabled in both gateways). VNC password = VNC_PW (RFB_PW for
-# the novnc public door; RDP_PW for the guacamole tailnet mirror), read from
+# ---- krfb (VNC :5900) as a systemd --user unit — the native VNC tailnet head ---
+# The native VNC :5900 mirror (TAILNET-ONLY, parity with the xrdp lineage's
+# x0vncserver head). VNC password = VNC_PW (RFB_PW when set, else RDP_PW), read from
 # ~/.krfb-rfbpw at exec time so it is NOT baked into the unit file (it IS visible in
 # krfb's ps/cmdline once running — accepted, same residual as the xrdp model).
 # krfb-virtualmonitor takes the password ONLY via --password (mandatory) and binds
@@ -202,7 +190,7 @@ chown -h core:core "$SESS_WANTS/plasma-headless.service"
 ln -sf /usr/lib/systemd/user/plasma-workspace.target "$SESS_WANTS/plasma-workspace.target" 2>/dev/null || true
 chown -h core:core "$SESS_WANTS/plasma-workspace.target" 2>/dev/null || true
 
-echo "fedora-desktop-krdp configured: KRdp RDP(:3389,TLS) + krfb VNC(:5900) + ${WEB_GATEWAY} web(:8443)."
+echo "fedora-desktop-krdp configured: KRdp RDP(:3389,TLS) + krfb VNC(:5900) + Guacamole web(:8443)."
 echo "Headless Plasma Wayland session (plasma-headless.service — EXPERIMENTAL) + KRdp + krfb +"
 echo "the claudebox come up under core's systemd --user (linger set; HOST-VALIDATED on a"
 echo "cgroup-v2-delegating host — the headless KDE-Wayland bring-up is the unproven step)."

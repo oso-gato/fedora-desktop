@@ -12,35 +12,30 @@
 #   VNC  <tailnet-ip>:5900              TAILNET-ONLY — GRD native
 #   ssh  :4444 (key-only) + Tailscale SSH; mosh UDP 61001-62000
 #
-#   WEB_GATEWAY  guacamole (default) | novnc — MUST match the image's baked gateway
+# The web gateway is Apache Guacamole (the only one). Required: RDP_PW + GUAC_PW
+# (the public web login — use a STRONG password; brute-force lockout is enforced by
+# the baked guacamole-auth-ban extension). RFB_PW is OPTIONAL: it arms the
+# tailnet-only GRD VNC :5900 mirror for native VNC viewers.
 #   RDP_PW='…'   (required) core's system + GRD RDP password
-#   GUAC_PW='…'  (guacamole gateway) the Guacamole web-login password (user core)
-#   RFB_PW='…'   (novnc gateway)     the GRD VNC password = the public web-door auth
+#   GUAC_PW='…'  (required) the PUBLIC Guacamole web-login password (user core)
+#   RFB_PW='…'   (optional) the GRD VNC password (tailnet :5900 mirror); else RDP_PW
 #   TS_AUTHKEY   (optional) unattended tailnet join
 #   IMAGE        (optional) defaults to the local build
 #
-#   WEB_GATEWAY=guacamole RDP_PW='…' GUAC_PW='…' [TS_AUTHKEY=tskey-…] ./run.sh.grd
-#   WEB_GATEWAY=novnc     RDP_PW='…' RFB_PW='…'  [TS_AUTHKEY=tskey-…] ./run.sh.grd
+#   RDP_PW='…' GUAC_PW='…' [RFB_PW='…'] [TS_AUTHKEY=tskey-…] ./run.sh.grd
 set -eu
-WEB_GATEWAY="${WEB_GATEWAY:-guacamole}"
 : "${RDP_PW:?set RDP_PW (core system + GRD RDP password)}"
+: "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
+HEALTH_PATH="/guacamole/"
 IMAGE="${IMAGE:-localhost/fedora-desktop-grd:latest}"
-TS_AUTHKEY="${TS_AUTHKEY:-}"
-
-case "$WEB_GATEWAY" in
-  guacamole) : "${GUAC_PW:?set GUAC_PW (Guacamole web-login password)}"
-             HEALTH_PATH="/guacamole/" ;;
-  novnc)     : "${RFB_PW:?set RFB_PW (GRD VNC password = noVNC web-door auth)}"
-             HEALTH_PATH="/vnc.html" ;;
-  *) echo "FATAL: unknown WEB_GATEWAY='$WEB_GATEWAY' (want: guacamole|novnc)" >&2; exit 1 ;;
-esac
+TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"
 
 # Secrets reach the first-boot oneshot via a bind-mounted EnvironmentFile (the
 # fedora-desktop-grd-firstboot.service reads /etc/fedora-desktop/secrets.env).
 SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 { printf 'RDP_PW=%s\n' "$RDP_PW"
-  [ "$WEB_GATEWAY" = guacamole ] && printf 'GUAC_PW=%s\n' "$GUAC_PW"
-  [ "$WEB_GATEWAY" = novnc ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
+  [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
+  [ -n "$RFB_PW" ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
   [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"; } > "$SECRETS"
 
 podman run -d --name fedora-desktop-grd \
@@ -65,10 +60,10 @@ podman run -d --name fedora-desktop-grd \
     "$IMAGE"
 rm -f "$SECRETS"
 
-echo "Started fedora-desktop-grd (GNOME Wayland + GRD, systemd-PID-1, web=${WEB_GATEWAY})."
-echo "  web   https://<public-or-tailnet-ip>:8443${HEALTH_PATH}"
+echo "Started fedora-desktop-grd (GNOME Wayland + GRD, systemd-PID-1, web=Apache Guacamole)."
+echo "  web   https://<public-or-tailnet-ip>:8443${HEALTH_PATH}  (PUBLIC, the only public door; login core / GUAC_PW)"
 echo "  RDP   <tailnet-ip>:3389   (TAILNET-ONLY — native RDP clients; login core / RDP_PW)"
-echo "  VNC   <tailnet-ip>:5900   (TAILNET-ONLY — native VNC viewers; password RDP_PW)"
+echo "  VNC   <tailnet-ip>:5900   (TAILNET-ONLY — native VNC viewers; password RFB_PW or RDP_PW)"
 echo "  ssh   ssh -p 4444 core@<public-ip>   +   ssh core@<tailnet-ip> (Tailscale SSH)"
 echo
 echo "REQUIRES a cgroup-v2-delegating host. If it never reaches (healthy), the most"

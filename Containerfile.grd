@@ -9,11 +9,12 @@
 # 3-AXIS ACCESS, all converging on ONE GRD session:
 #   RDP  — GRD native (FreeRDP, :3389, TLS), tailnet-only
 #   VNC  — GRD native (grdctl vnc, libvncserver, :5900), tailnet-only
-#   web  — per WEB_GATEWAY (the SOLE public desktop door, TLS :8443):
-#            guacamole — guacd -> GRD's loopback RDP -> HTML5 (RDP-grade; the
-#                        guacamole.war is the lone class-(c) artifact, GPG-verified)
-#            novnc     — noVNC + websockify -> GRD's loopback VNC (ALL class-(a))
-#          Default guacamole; identical selector to the xrdp + krdp lineages.
+#   web  — Apache Guacamole ONLY (the SOLE public :8443 browser door): guacd ->
+#            GRD's loopback RDP -> HTML5 (RDP-grade; the guacamole.war is the lone
+#            class-(c) artifact, GPG-verified). noVNC was REMOVED fleet-wide — the
+#            web door is a PUBLIC (non-tailnet) door and noVNC's 8-char VNC VncAuth
+#            is unacceptable there; Guacamole authenticates with a strong password
+#            + brute-force lockout (auth-ban). Identical to the xrdp lineage.
 #
 # HEADLESS (binding prerequisite — see CLAUDE.md): runs with NO monitor/GPU/seat;
 # the session is mutter --headless rendered by software GL (llvmpipe).
@@ -36,13 +37,11 @@ FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
 # lineage's guacamole gateway.
 ARG GUAC_VERSION=1.6.0
 ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
-ARG WEB_GATEWAY=guacamole
 
 ENV LANG=en_US.UTF-8
 
 COPY install-grd.sh /tmp/install-grd.sh
 RUN GUAC_VERSION="${GUAC_VERSION}" GUAC_GPG_FP="${GUAC_GPG_FP}" \
-    WEB_GATEWAY="${WEB_GATEWAY}" \
     bash /tmp/install-grd.sh && rm /tmp/install-grd.sh
 
 COPY --chmod=755 entrypoint-grd.sh /usr/local/bin/entrypoint-grd.sh

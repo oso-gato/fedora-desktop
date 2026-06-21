@@ -7,23 +7,21 @@
 # SECRETS (per door — supplied at spin-up; the host claudebox MUST ASK the operator
 # for these, never hardcode them — see "DEPLOY CONTRACT" in README.md):
 #   RDP_PW='…'  (REQUIRED) core's system/RDP password — the RDP door (TAILNET-ONLY)
-#               AND, for the guacamole gateway, the loopback RDP the web door SSO's
-#               into. Use a STRONG password (it is core's login).
-#   GUAC_PW='…' (guacamole gateway — REQUIRED) the PUBLIC web-login password. This
-#               is the only auth on the only public door → use a STRONG password.
-#   RFB_PW='…'  (novnc gateway → REQUIRED, it IS the public web-door auth; guacamole
-#               gateway → OPTIONAL, arms the :5900 TAILNET VNC mirror). VNC VncAuth
-#               is WEAK (only the first 8 chars count) — fine for the TAILNET-only
-#               VNC, but for a PUBLIC door prefer guacamole (GUAC_PW) over novnc.
+#               AND the loopback RDP the Guacamole web door SSO's into. Use a STRONG
+#               password (it is core's login).
+#   GUAC_PW='…' (REQUIRED) the PUBLIC Guacamole web-login password. This is the only
+#               auth on the only public door → use a STRONG password (the baked
+#               guacamole-auth-ban extension adds brute-force lockout on top).
+#   RFB_PW='…'  (OPTIONAL) arms the :5900 TAILNET-ONLY VNC mirror for native VNC
+#               viewers. VncAuth is weak (8 chars) — fine, since :5900 is tailnet-only.
 #   WEB_PORT    (optional) host port for the public web door. DEFAULT 8443.
 #   TS_AUTHKEY  (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
-#   WEB_GATEWAY=guacamole RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [TS_AUTHKEY=…] ./run.sh
-#   WEB_GATEWAY=novnc     RDP_PW='…' RFB_PW='…'  [WEB_PORT=8443] [TS_AUTHKEY=…] ./run.sh
+#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [TS_AUTHKEY=…] ./run.sh
 #
 # ACCESS MODEL (load-bearing — do NOT widen the publish set):
 #   PUBLIC internet door — the ONLY -p publish:
-#     * ${WEB_PORT}->8443/tcp  the web gateway over TLS (Guacamole/noVNC). Changeable
+#     * ${WEB_PORT}->8443/tcp  the Apache Guacamole web gateway over TLS. Changeable
 #                  at spin-up via WEB_PORT (default 8443). This is the sole public surface.
 #   TAILNET-ONLY (NEVER published; reachable only over the tailnet IP, and dropped on
 #   non-tailscale0/non-loopback by an in-container nft guard — true by construction):
@@ -38,20 +36,15 @@
 # and your apps are still open.
 set -eu
 
-# WEB_GATEWAY must match the image you built (baked in /etc/fedora-desktop/web-gateway):
-#   guacamole (default) → needs GUAC_PW (the Guacamole web-login password).
-#   novnc               → needs RFB_PW (the noVNC web-door password = the VNC VncAuth).
-WEB_GATEWAY="${WEB_GATEWAY:-guacamole}"
+# The web gateway is Apache Guacamole (the only one). Required: RDP_PW + GUAC_PW
+# (the public web login — use a STRONG password; brute-force lockout is enforced by
+# the baked guacamole-auth-ban extension). RFB_PW is OPTIONAL: it arms the
+# tailnet-only :5900 VNC mirror for native VNC viewers.
 : "${RDP_PW:?set RDP_PW (RDP/system password for core)}"
-case "$WEB_GATEWAY" in
-  guacamole) : "${GUAC_PW:?set GUAC_PW (Guacamole web login) — or WEB_GATEWAY=novnc + RFB_PW}"
-             HEALTH_URL='https://127.0.0.1:8443/guacamole/'; BACKEND_PORT=3389 ;;
-  novnc)     : "${RFB_PW:?set RFB_PW (noVNC/VNC web-door password) for the novnc gateway}"
-             HEALTH_URL='https://127.0.0.1:8443/vnc.html';   BACKEND_PORT=5900 ;;
-  *) echo "WEB_GATEWAY must be guacamole|novnc" >&2; exit 1 ;;
-esac
+: "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
+HEALTH_URL='https://127.0.0.1:8443/guacamole/'; BACKEND_PORT=3389
 IMAGE="${IMAGE:-localhost/fedora-desktop:latest}"
-TS_AUTHKEY="${TS_AUTHKEY:-}"; GUAC_PW="${GUAC_PW:-}"; RFB_PW="${RFB_PW:-}"
+TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"
 # WEB_PORT — the web gateway is the ONLY public door; its host port is changeable
 # at spin-up (DEFAULT 8443). Everything else — ssh, mosh, RDP, VNC — is TAILNET-ONLY
 # (never published; reached over the tailnet IP / Tailscale SSH).
@@ -92,13 +85,7 @@ echo "If no TS_AUTHKEY was given: podman logs -f fedora-desktop and open the"
 echo "ACTION REQUIRED login.tailscale.com link (one-time per state volume)."
 echo
 echo "Reach it:"
-echo "  web  (PUBLIC, the only public door)"
-if [ "$WEB_GATEWAY" = "guacamole" ]; then
-  echo "    https://<public-ip>:${WEB_PORT}/guacamole/   (login: core / GUAC_PW — use a STRONG password)"
-else
-  echo "    https://<public-ip>:${WEB_PORT}/vnc.html      (noVNC — password: RFB_PW; NOTE: VNC VncAuth is"
-  echo "    weak/8-char — prefer WEB_GATEWAY=guacamole for a public door)"
-fi
+echo "  web  https://<public-ip>:${WEB_PORT}/guacamole/   (PUBLIC, the only public door; login core / GUAC_PW)"
 echo "  ssh  ssh core@<tailnet-ip>                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
 echo "  mosh mosh --ssh='ssh' core@<tailnet-ip>    (over the tailnet — TAILNET-ONLY)"
 echo "  RDP  <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"

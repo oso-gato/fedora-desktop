@@ -61,7 +61,7 @@ applies the waiver label — that is correct, not a bug. Do NOT bundle it with f
 
 ## HEADLESS (binding prerequisite — EVERY variant, EVERY lineage)
 
-Every fedora-desktop image — the **xrdp** lineage (XFCE/MATE/LXQt/KDE × guacamole/novnc) AND the
+Every fedora-desktop image — the **xrdp** lineage (XFCE/MATE/LXQt/KDE) AND the
 **grd** lineage (GNOME-Wayland / GRD), and any future lineage (e.g. KDE-Wayland/KRdp) — MUST run
 **fully headless**: no physical monitor, no GPU, and no local login seat is ever attached or
 required for it to work. The desktop session is always a *virtual* display rendered by software
@@ -76,12 +76,12 @@ Principle 9 that the image comes up + serves every access path with no display/s
 | # | Principle | Rule |
 |---|---|---|
 | 1 | BASE | Build only from the official `registry.fedoraproject.org/fedora:${FEDORA_VERSION}` image. Version is a Containerfile `ARG` — never inlined. |
-| 2 | SOURCES | Every package/artifact from an official source, exactly one of: (a) Fedora's own repos via dnf; (b) the vendor's/developer's own RPM or dnf repo (`.repo` with `gpgcheck=1`); (c) an **official-upstream binary release artifact with NO class-(a)/(b) source** — bounded by the **Class-(c) rules** below (last-resort/zero-base; publisher GPG-signature-or-checksum-verified, fail-closed; one of three self-contained consumption shapes; never loose on `$PATH`; disclosed per-artifact). Never: COPR or other third-party repos, pip/npm/cargo/gem/brew installs, curl-pipe-sh, tarball-on-PATH, flatpak, snap. **Applies to BOTH the base image AND claudebox's `additional_packages`.** Anything outside (a)/(b)/(c)-as-scoped needs an explicit Arthur waiver row. **Class-(c) artifacts in use: `guacamole.war` (guacamole web-gateway only), Obsidian.** |
-| 3 | MINIMAL | dnf only with `--setopt=install_weak_deps=False`. Every package gets a justifying row in the relevant Packages table (BASE or BOX); a package without a row is a violation. **Install the most specific (leaf) package, never a convenience metapackage.** `install_weak_deps=False` blocks weak Recommends but NOT a metapackage's hard Requires — a metapackage silently pulls unused components (e.g. `fail2ban` hard-pulls `fail2ban-firewalld`→`firewalld` + `fail2ban-sendmail`→`esmtp`; we install `fail2ban-server`). If unsure whether a name is a metapackage, verify (`dnf repoquery --requires <pkg>`) and flag before adding. **"MINIMUM" IS RELATIVE TO THE CHOSEN CAPABILITY, not the absolute package count.** Once a capability is decided (a working GNOME-shell desktop; an RDP-grade web gate), install the minimal LEAF footprint that makes THAT capability work, and accept + DISCLOSE the irreducible hard-dependency closure it entails (e.g. `gnome-shell`→webkit + `gnome-control-center`; KDE→samba/codec). Between options that deliver the SAME capability, prefer the smaller-footprint / built-in / class-(a) one. A lighter option that REDUCES the capability is NOT "more minimal" — it is a lesser function, and choosing it is a recorded capability trade-off, NOT a minimalism win. (Worked decision: Guacamole [RDP-grade web gate — H.264/audio/clipboard/file-transfer in the browser] was chosen over noVNC [VNC-grade], so its Tomcat + JVM + `.war` footprint IS the minimum for full RDP-in-the-browser.) |
+| 2 | SOURCES | Every package/artifact from an official source, exactly one of: (a) Fedora's own repos via dnf; (b) the vendor's/developer's own RPM or dnf repo (`.repo` with `gpgcheck=1`); (c) an **official-upstream binary release artifact with NO class-(a)/(b) source** — bounded by the **Class-(c) rules** below (last-resort/zero-base; publisher GPG-signature-or-checksum-verified, fail-closed; one of three self-contained consumption shapes; never loose on `$PATH`; disclosed per-artifact). Never: COPR or other third-party repos, pip/npm/cargo/gem/brew installs, curl-pipe-sh, tarball-on-PATH, flatpak, snap. **Applies to BOTH the base image AND claudebox's `additional_packages`.** Anything outside (a)/(b)/(c)-as-scoped needs an explicit Arthur waiver row. **Class-(c) artifacts in use: `guacamole.war` + `guacamole-auth-ban` (both Apache, the same pinned key, GPG-verified), Obsidian.** |
+| 3 | MINIMAL | dnf only with `--setopt=install_weak_deps=False`. Every package gets a justifying row in the relevant Packages table (BASE or BOX); a package without a row is a violation. **Install the most specific (leaf) package, never a convenience metapackage.** `install_weak_deps=False` blocks weak Recommends but NOT a metapackage's hard Requires — a metapackage silently pulls unused components (e.g. `fail2ban` hard-pulls `fail2ban-firewalld`→`firewalld` + `fail2ban-sendmail`→`esmtp`; we install `fail2ban-server`). If unsure whether a name is a metapackage, verify (`dnf repoquery --requires <pkg>`) and flag before adding. **"MINIMUM" IS RELATIVE TO THE CHOSEN CAPABILITY, not the absolute package count.** Once a capability is decided (a working GNOME-shell desktop; an RDP-grade web gate), install the minimal LEAF footprint that makes THAT capability work, and accept + DISCLOSE the irreducible hard-dependency closure it entails (e.g. `gnome-shell`→webkit + `gnome-control-center`; KDE→samba/codec). Between options that deliver the SAME capability, prefer the smaller-footprint / built-in / class-(a) one. A lighter option that REDUCES the capability is NOT "more minimal" — it is a lesser function, and choosing it is a recorded capability trade-off, NOT a minimalism win. (Worked decision: Apache Guacamole is the SOLE web gate. noVNC [VNC-grade] was REMOVED fleet-wide — the web door is a PUBLIC, non-tailnet door and noVNC's 8-char VncAuth is unacceptable there (see Principle 7); Guacamole [RDP-grade — H.264/audio/clipboard/file-transfer in the browser, strong password + auth-ban lockout + TLS] is the chosen capability, so its Tomcat + JVM + `.war` footprint IS the minimum for full strongly-authed RDP-in-the-browser. The same "minimum relative to capability" rule explains the disclosed `gnome-shell`→webkit / KDE→samba hard-dependency closures: once the DE capability is chosen, that closure is its irreducible minimum, not bloat.) |
 | 4 | VERIFY FIRST | Before adopting or bumping any source/version, fact-check it against the live source (web). Gate risky installs (version-mismatched vendor RPMs, new repos, a new Obsidian/Guacamole/jeemig release) in a scratch container before editing build files. |
-| 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. Container user is the generic `core` (uid 1000). Credentials enter only as runtime env vars — `RDP_PW` (always) + the web-gateway's auth password (`GUAC_PW` for the guacamole gateway / `RFB_PW` for the novnc gateway), with `RFB_PW` (guacamole tailnet VNC mirror) + `TS_AUTHKEY` optional — and the entrypoint fails fast when a required one is missing. |
+| 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. Container user is the generic `core` (uid 1000). Credentials enter only as runtime env vars — `RDP_PW` (always) + `GUAC_PW` (always; the public Guacamole web door), with `RFB_PW` (OPTIONAL; arms the tailnet-only :5900 native-VNC mirror) + `TS_AUTHKEY` optional — and the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache Guacamole `.war` version is a Containerfile `ARG` (`GUAC_VERSION`) + its release-signing-key fingerprint (`GUAC_GPG_FP`) — bump together, after rule 4. (rclone + jakartaee-migration are Fedora class-(a) packages now — no version pin.) Obsidian is intentionally latest-at-build (resolved from the developer's releases API) with its sha256 logged into the build output. |
-| 7 | DEPLOY CONTRACT | Every image ships a `run.sh` that is the only sanctioned way to run it: runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the PORT-PUBLISH SET. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. **The web gateway is the ONLY public publish — `${WEB_PORT}→8443` TLS (Guacamole or noVNC), `WEB_PORT` default 8443, changeable at spin-up. ssh (`:22`), mosh (UDP `61001-62000`), RDP (`:3389`) and VNC (`:5900`) are ALL TAILNET-ONLY — never `-p`, and additionally dropped on non-`lo`/non-`tailscale0` interfaces by the in-container `nft fd_tailnet_guard` (tailnet-only by *construction*). ssh is reached via Tailscale SSH (keyless) or ssh-key over the tailnet.** Secrets are per-door, supplied at spin-up (the host claudebox ASKS the operator — see README DEPLOY CONTRACT): `RDP_PW` (strong; system/RDP + web SSO) + `GUAC_PW` (strong; the public web door, guacamole) or `RFB_PW` (the novnc public door = WEAK 8-char VncAuth → prefer guacamole for public; `RFB_PW` otherwise arms the tailnet VNC mirror). Widening the publish set is a control-plane change. |
+| 7 | DEPLOY CONTRACT | Every image ships a `run.sh` that is the only sanctioned way to run it: runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the PORT-PUBLISH SET. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. **The web gateway is the ONLY public publish — `${WEB_PORT}→8443` TLS (Apache Guacamole, the sole web gate), `WEB_PORT` default 8443, changeable at spin-up. ssh (`:22`), mosh (UDP `61001-62000`), RDP (`:3389`) and VNC (`:5900`) are ALL TAILNET-ONLY — never `-p`, and additionally dropped on non-`lo`/non-`tailscale0` interfaces by the in-container `nft fd_tailnet_guard` (tailnet-only by *construction*). ssh is reached via Tailscale SSH (keyless) or ssh-key over the tailnet.** Secrets are per-door, supplied at spin-up (the host claudebox ASKS the operator — see README DEPLOY CONTRACT): `RDP_PW` (strong; system/RDP + web SSO) + `GUAC_PW` (strong; the public web door — Guacamole authenticates the public, non-tailnet door, hardened by the `guacamole-auth-ban` brute-force lockout extension + TLS), with `RFB_PW` OPTIONAL (arms the tailnet-only :5900 native-VNC mirror). Widening the publish set is a control-plane change. |
 | 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, the 15th monthly (`--no-cache`), and dispatch; PRs build-validate only (no registry write). A **control-plane diff-guard** job fails any PR touching a guardrail file without the `control-plane-approved` label. Built-in token only. The IN-CONTAINER claudebox refreshes daily on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)` plus a functional probe of each access path (web :8443 → 200 + login, RDP over tailnet, optional VNC, ssh :4444/tailnet, mosh; cloud-sync + vault-gitsync if configured). Self-validation runs in the OWN nested `CONTAINER_HOST` engine, scratch volume, NEVER bind-mounting `$HOME`/the vault, torn down at session end. Final proof is CI green + a host deploy. |
 | 10 | PROMOTION GATE / PUSH SCOPE | The box pushes only `fedora-desktop` `main`, only after a clickable approval; control-plane/guardrail changes are standalone, never bundled, and approval-gated; every other repo is PR-only. Enforced by `policy/hooks/gate-push.sh` + `managed-settings.json` + the CI diff-guard. The in-box agent grows `distrobox.ini`/`policy/`/scripts only by editing the LIVE clone at `/home/core/.local/share/fedora-dev/` and opening a PR. |
@@ -119,8 +119,11 @@ every binary on `$PATH` resolves to an rpm (`rpm -qf`) — the "no loose binary"
 prose.
 
 **Class-(c) artifacts in use (fedora-desktop):** `guacamole.war` (Apache `.war`, deployed into
-Fedora's Tomcat, GPG `.asc`-verified against the pinned Apache key `GUAC_GPG_FP`; **guacamole
-web-gateway only** — the novnc gateway is 100% class-(a)); Obsidian (developer AppImage →
+Fedora's Tomcat, GPG `.asc`-verified against the pinned Apache key `GUAC_GPG_FP`); `guacamole-auth-ban`
+(a SECOND Apache Guacamole artifact — its `.jar` extension dropped into `/etc/guacamole/extensions/`
+of the same Fedora Tomcat runtime, GPG `.asc`-verified against the SAME pinned Apache key
+`GUAC_GPG_FP` via the identical fetch+verify+extract pattern; the brute-force lockout that makes the
+single strong `GUAC_PW` a defensible PUBLIC door); Obsidian (developer AppImage →
 `/opt`, latest-at-build, sha256 resolve-and-logged — upstream publishes no signature).
 *(fedora-dev + fedora-bootstrap carry this identical (c) definition but ship no such artifact:
 "Class-(c) artifacts in use: none.")*
@@ -157,16 +160,14 @@ fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` 
 
 | Package | Pin | Source | Why required |
 |---|---|---|---|
-| xrdp | Fedora current | a | RDP server (:3389, tailnet-only) + the Xorg :10 session owner (both web gateways front this session). Hard-deps `tigervnc-x11-server` → provides `x0vncserver`, the same-session VNC head (REQUIRED by the novnc gateway's web door, optional tailnet mirror under guacamole) |
+| xrdp | Fedora current | a | RDP server (:3389, tailnet-only) + the Xorg :10 session owner (the Guacamole web gateway fronts this session). Hard-deps `tigervnc-x11-server` → provides `x0vncserver`, the same-session VNC head — the OPTIONAL tailnet-only :5900 native-VNC mirror (armed by `RFB_PW`) |
 | xorgxrdp | Fedora current | a | Xorg backend modules xrdp drives (the X session everything attaches to) |
 | openh264 | Fedora current | a | H.264 encoder for xrdp's GFX pipeline (the `gfx.toml` H.264-first tuning) |
-| guacd | Fedora current | a | **WEB_GATEWAY=guacamole only.** Apache Guacamole proxy daemon (loopback `-b 127.0.0.1`); browser-protocol → local RDP |
-| libguac-client-rdp | Fedora current | a | **guacamole only.** guacd's RDP client plugin — the web door reaches the local RDP session through it |
-| tomcat | Fedora current | a | **guacamole only.** servlet container serving the `guacamole.war` webapp on TLS :8443 |
-| tomcat-jakartaee-migration | Fedora current | a | **guacamole only.** Fedora's jakartaee-migration (`javax2jakarta`) — converts the upstream `guacamole.war` javax→jakarta for Tomcat 10.1 at build (class-a, replaces the old curl'd shaded jar) |
-| gnupg2 | Fedora current | a | **guacamole only.** the `gpg` CLI used at build to verify the `guacamole.war` signature against the pinned Apache key |
-| novnc | Fedora current | a | **WEB_GATEWAY=novnc only.** the HTML5 VNC client (`/usr/share/novnc`) served over TLS :8443 by websockify — the all-class-a browser door |
-| python3-websockify | Fedora current | a | **novnc only.** the WebSocket↔TCP bridge fronting the loopback `x0vncserver` :5900 head with TLS on :8443 |
+| guacd | Fedora current | a | Apache Guacamole proxy daemon (loopback `-b 127.0.0.1`); browser-protocol → local RDP |
+| libguac-client-rdp | Fedora current | a | guacd's RDP client plugin — the web door reaches the local RDP session through it |
+| tomcat | Fedora current | a | servlet container serving the `guacamole.war` webapp (+ the `guacamole-auth-ban` extension) on TLS :8443 |
+| tomcat-jakartaee-migration | Fedora current | a | Fedora's jakartaee-migration (`javax2jakarta`) — converts the upstream `guacamole.war` javax→jakarta for Tomcat 10.1 at build (class-a, replaces the old curl'd shaded jar) |
+| gnupg2 | Fedora current | a | the `gpg` CLI used at build to verify the `guacamole.war` AND `guacamole-auth-ban` signatures against the pinned Apache key |
 | xfce4-session | Fedora current | a | XFCE session manager (`startxfce4` entry point) |
 | xfwm4 | Fedora current | a | XFCE window manager |
 | xfce4-panel | Fedora current | a | XFCE panel/taskbar |
@@ -200,7 +201,8 @@ fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` 
 | 1password-cli | 1Password dnf repo | b | 1Password CLI (`op`) — scripted secret retrieval |
 | rclone | Fedora current | a | the ONLY cloud-sync engine (NON-vault GDrive + OneDrive; mount + delete-guarded bisync). No abraunegg `onedrive` daemon. From Fedora's OWN repo (class-a, signed) — the unsigned developer rpm was dropped per the zero-base check |
 | Obsidian | developer AppImage, latest-at-build (sha256 logged → `/opt`) | c | the vault editor — primary knowledge-work interface (no rpm exists) |
-| guacamole.war | Apache `.war` (`GUAC_VERSION`), javax→jakarta-converted | c | **guacamole gateway only.** the Guacamole web client on :8443 — no class-(a)/(b) source (Fedora retired `guacamole-client` as un-buildable Java, endorsing the prebuilt .war; Apache ships only .war + source + Docker). **GPG-verified** against the pinned Apache key (`GUAC_GPG_FP`) before use; converted with Fedora's class-(a) jakartaee-migration. The lone class-(c) artifact (see "Class-(c) sources") |
+| guacamole.war | Apache `.war` (`GUAC_VERSION`), javax→jakarta-converted | c | the Guacamole web client on :8443 — no class-(a)/(b) source (Fedora retired `guacamole-client` as un-buildable Java, endorsing the prebuilt .war; Apache ships only .war + source + Docker). **GPG-verified** against the pinned Apache key (`GUAC_GPG_FP`) before use; converted with Fedora's class-(a) jakartaee-migration. A class-(c) artifact (see "Class-(c) sources") |
+| guacamole-auth-ban | Apache `.tar.gz` (`GUAC_VERSION`) → `.jar` extension | c | brute-force lockout on the PUBLIC :8443 door — bans a source IP after repeated failed Guacamole logins (in-memory, backend-independent, no database). No class-(a)/(b) source. **GPG-verified** against the SAME pinned Apache key (`GUAC_GPG_FP`) via the identical fetch+verify+extract pattern as the .war; the `.jar` is dropped into `/etc/guacamole/extensions/` of Fedora's class-(a) Tomcat runtime. A class-(c) artifact (see "Class-(c) sources") |
 
 **Desktop-variant note (the `DESKTOP_ENV` xrdp family).** The XFCE rows above
 (`xfce4-session`…`xfce4-settings`) are the default/base DE leaf set. The `mate`/`lxqt`/`kde`
@@ -214,21 +216,22 @@ privilege-escalation dialogs are non-functional by design** across all variants 
 no-systemd harness supervises no system D-Bus / `polkitd`) — fine for a vault/wiki + dev
 workstation that does no interactive system administration.
 
-## THE THREE LINEAGES — one repo, three init/desktop contracts (WEB_GATEWAY symmetric)
+## THE THREE LINEAGES — one repo, three init/desktop contracts
 
 fedora-desktop ships **three lineages** in this one repo. They share the harness (PART A), the
-app set, the policy, Principle 2(c), AND the **symmetric `WEB_GATEWAY` selector** — only the
-DESKTOP + the INIT contract + the NATIVE remote servers differ. Every lineage exposes a loopback
-**RDP :3389** (native server) AND a loopback **VNC :5900** (native server); `WEB_GATEWAY` picks
-the SOLE public :8443 door — `guacamole` fronts the RDP (RDP-grade browser: audio/clipboard/
-file-transfer; the `guacamole.war` is the lone class-(c) artifact), `novnc` fronts the VNC
-(ALL class-(a), JVM-free, lighter). Default `guacamole` everywhere.
+app set, the policy, Principle 2(c), AND the **same SOLE web gate — Apache Guacamole on :8443** —
+only the DESKTOP + the INIT contract + the NATIVE remote servers differ. Every lineage exposes a
+loopback **RDP :3389** (native server) AND a loopback **VNC :5900** (native server, the optional
+tailnet-only mirror); Guacamole fronts the RDP as the SOLE public :8443 door (RDP-grade browser:
+audio/clipboard/file-transfer; strong `GUAC_PW` + the `guacamole-auth-ban` lockout + TLS; the
+`guacamole.war` + `guacamole-auth-ban` are the class-(c) artifacts). noVNC was removed fleet-wide
+(the public, non-tailnet door needs strong auth — noVNC's 8-char VncAuth is unacceptable).
 
-| Lineage (file) | Init | Desktop | RDP server | VNC server | guac / novnc size | Validation |
+| Lineage (file) | Init | Desktop | RDP server | VNC server | size | Validation |
 |---|---|---|---|---|---|---|
 | **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/MATE/LXQt/KDE on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | 3.65–4.4 GB | full (build→run→probe) |
-| **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 / 3.83 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
-| **krdp** (`Containerfile.krdp`) | **systemd-PID-1** | Plasma-6 **Wayland** / KRdp+krfb | KRdp (`krdpserver`) | krfb (`krfb-virtualmonitor`, libvncserver) | 4.31 / 4.17 GB | assembly-validated; runtime **EXPERIMENTAL — headless KDE-Wayland UNPROVEN** |
+| **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
+| **krdp** (`Containerfile.krdp`) | **systemd-PID-1** | Plasma-6 **Wayland** / KRdp+krfb | KRdp (`krdpserver`) | krfb (`krfb-virtualmonitor`, libvncserver) | 4.31 GB | assembly-validated; runtime **EXPERIMENTAL — headless KDE-Wayland UNPROVEN** |
 
 **Disclosed hard-dep closures (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**
 - **grd:** `gnome-shell` hard-pulls `webkitgtk6.0` + `webkit2gtk4.1` (~182 MiB: captive-portal
@@ -240,9 +243,10 @@ file-transfer; the `guacamole.war` is the lone class-(c) artifact), `novnc` fron
   `xdg-utils`/`adwaita-icon-theme`/`dbus`) ride in TRANSITIVELY through the Plasma closure; the two
   that do NOT — `libsecret` (Secret Service client for 1Password/VS Code; `kf6-kwallet` is the
   provider) and `pipewire-pulseaudio` (the `ENABLE_AUDIO` Pulse shim) — are installed explicitly.
-- Both grd+krdp native VNC servers are **libvncserver-backed (Tight+JPEG, ZRLE)** — so the noVNC
-  path is bandwidth-comparable to the xrdp/TigerVNC path (libvncserver's Tight is somewhat less
-  finely tuned than TigerVNC's — a disclosed, order-of-magnitude-equal difference).
+- Both grd+krdp native VNC servers are **libvncserver-backed (Tight+JPEG, ZRLE)** — the optional
+  tailnet :5900 native-VNC mirror is bandwidth-comparable to the xrdp/TigerVNC path (libvncserver's
+  Tight is somewhat less finely tuned than TigerVNC's — a disclosed, order-of-magnitude-equal
+  difference). The public :8443 door is Guacamole-over-RDP on every lineage.
 
 **systemd-PID-1 = STOP-AND-SURFACE.** The grd + krdp lineages require the HOST to grant cgroup-v2
 delegation + a writable `/sys/fs/cgroup` — a wider host-trust ask than the xrdp lineage. They
@@ -272,13 +276,11 @@ is **host-validated on a delegating host, both Wayland lineages are EXPERIMENTAL
 
 ## WEB-GATEWAY LOW-BANDWIDTH TUNING (verified vs L1 sources)
 
-The ONLY bandwidth that matters is the **browser ↔ server :8443** hop; the loopback RDP/VNC inside
-the container is localhost (free). **Neither gateway streams H.264 / inter-frame video to the
-browser** — both are intra-frame still-image models (Guacamole sends PNG/JPEG/WebP `img`
-instructions; VNC sends Tight/JPEG rectangles). For static knowledge work they are a **near-tie**;
-on a *real-disconnect* unstable link **guacamole is lighter** (server-held session vs noVNC's
-full-framebuffer-per-reconnect); on a stable-slow link a tuned noVNC edges it. A real video clip
-is multi-Mbps on **both** — not a gateway discriminator.
+The ONLY bandwidth that matters is the **browser ↔ server :8443** hop; the loopback RDP inside
+the container is localhost (free). **Guacamole does NOT stream H.264 / inter-frame video to the
+browser** — it is an intra-frame still-image model (Guacamole sends PNG/JPEG/WebP `img`
+instructions). On a *real-disconnect* unstable link it is naturally resilient (server-held session,
+no full-framebuffer-per-reconnect). A real video clip is multi-Mbps regardless — not a tunable.
 
 - **`ENABLE_AUDIO` (default `false`):** audio is a continuous push stream — OFF by default for the
   reading/editing desktop; set `ENABLE_AUDIO=true` to restore it. The entrypoints emit
@@ -289,9 +291,6 @@ is multi-Mbps on **both** — not a gateway discriminator.
   display-update` (already set). Do **NOT** count on the xrdp `gfx.toml` "H.264-first" tuning to
   cut PUBLIC-hop bytes — it only speeds the FREE localhost RDP hop; guacd re-encodes to images for
   the browser regardless. For a mostly-static desktop that tuning optimizes the wrong hop.
-- **noVNC levers:** `qualityLevel` (default **6** → ~3–4), `compressionLevel` (default 2 → ~6–9),
-  prefer Tight, use **binary** WebSocket (not base64 — base64 inflates ~33%), cap resolution +
-  framerate. The pull model is naturally self-throttling on a slow link.
 
 ## BOX PACKAGES
 
@@ -317,18 +316,18 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | README.md | human-facing project doc (TL;DR, Build Principles, Packages, Deploy, Operate, design appendix) |
 | CLAUDE.md | this file — agent rules for editing this repo |
 | Containerfile | base image build spec (`FROM fedora:ARG`; pinned `GUAC_VERSION`/`JEEMIG_VERSION`/`RCLONE_VERSION`; runs install.sh; COPYs entrypoint + box seed + bin/ + policy/hooks/; `EXPOSE` metadata; `VOLUME`s) |
-| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (fedora-xrdp desktop: XFCE, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion). Fails fast if the desktop ARGs aren't threaded through |
+| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (fedora-xrdp desktop: XFCE, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion + the GPG-verified guacamole-auth-ban extension). Fails fast if the desktop ARGs aren't threaded through |
 | entrypoint.sh | PID 1 (root): seeds `core`'s password from RDP_PW; syncs ssh keys; mints the Guacamole TLS keystore + user-mapping; supervises rsyslog + sshd + fail2ban + tailscaled + the rootless podman socket + inotify rebuild-watcher + daily-tick + first-boot live-clone-or-seed + eager claudebox assemble + xrdp-sesman/xrdp + guacd + Tomcat + the optional RFB_PW VNC mirror + the cloud-sync/vault-gitsync helpers; single `pgrep`/`kill -0` watchdog; SIGTERM trap for clean shutdown |
 | run.sh | manual deploy contract (`podman run -d` with --health-cmd, devices, volumes, restart, the public-only publish set + runtime secrets); fallback for non-systemd hosts. **CONTROL-PLANE (security flags + publish set)** |
 | fedora-desktop.container | systemd Quadlet (Pull=missing, Notify=healthy, AutoUpdate=registry, HealthCmd, the three Volumes, SecurityLabelDisable=true, the public-only PublishPort set, commented Secret= lines). **CONTROL-PLANE** |
-| Containerfile.grd | **grd lineage** base image (GNOME-Wayland / GRD; `FROM fedora:ARG`; ARGs `GUAC_VERSION`/`GUAC_GPG_FP`/`WEB_GATEWAY`; runs install-grd.sh; COPYs entrypoint-grd + the shared box seed; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
-| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD (RDP+VNC) + the per-`WEB_GATEWAY` web door (guacamole → guacd/Tomcat/.war | novnc → websockify system unit). Enables sshd/rsyslog/fail2ban/tailscaled + the web units + the firstboot oneshot; sets core linger; bakes lineage=grd + web-gateway markers |
-| entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): core password, ssh-key sync, GRD TLS PEM, per-gateway web door (Guacamole user-mapping with `ENABLE_AUDIO` toggle | noVNC websockify PEM), `grdctl` rdp+vnc config (RDP=RDP_PW, VNC=RFB_PW for novnc / RDP_PW for guacamole). Session bringup is HOST-VALIDATED |
-| run.sh.grd | grd deploy contract (`--systemd=always --cgroupns=host -v /sys/fs/cgroup`); WEB_GATEWAY-aware secrets (GUAC_PW | RFB_PW) + health path; secrets via bind-mounted `/etc/fedora-desktop/secrets.env`. **CONTROL-PLANE** + STOP-AND-SURFACE (needs a cgroup-v2-delegating host) |
-| Containerfile.krdp | **krdp lineage** base image (KDE Plasma-Wayland / KRdp+krfb; ARGs as grd + `WEB_GATEWAY`; runs install-krdp.sh; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
-| install-krdp.sh | krdp-lineage install: harness as systemd units + minimal Plasma-6 Wayland leaf set + KRdp (RDP) + krfb (VNC) + xdg-desktop-portal-kde + kpipewire + the per-`WEB_GATEWAY` web door. Same enable/linger/marker pattern (lineage=krdp) |
-| entrypoint-krdp.sh | krdp first-boot oneshot: core password, ssh-key sync, KRdp TLS PEM, per-gateway web door (Guacamole user-mapping with `ENABLE_AUDIO` toggle → KRdp loopback RDP | noVNC websockify PEM → krfb loopback VNC), krdpserverrc + a systemd-`--user` ExecStart drop-in passing `--username core --password $RDP_PW` (bypasses KWallet), krfb-virtualmonitor staging. Session bringup HOST-VALIDATED |
-| run.sh.krdp | krdp deploy contract (systemd-PID-1, WEB_GATEWAY-aware, mirrors run.sh.grd). **CONTROL-PLANE** + STOP-AND-SURFACE |
+| Containerfile.grd | **grd lineage** base image (GNOME-Wayland / GRD; `FROM fedora:ARG`; ARGs `GUAC_VERSION`/`GUAC_GPG_FP`; runs install-grd.sh; COPYs entrypoint-grd + the shared box seed; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
+| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD (RDP+VNC) + the Guacamole web door (guacd/Tomcat/.war + the GPG-verified guacamole-auth-ban extension). Enables sshd/rsyslog/fail2ban/tailscaled + the web units + the firstboot oneshot; sets core linger; bakes lineage=grd |
+| entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): core password, ssh-key sync, GRD TLS PEM, Guacamole web door (user-mapping with `ENABLE_AUDIO` toggle), `grdctl` rdp+vnc config (RDP=RDP_PW; VNC=RFB_PW arms the optional tailnet mirror). Session bringup is HOST-VALIDATED |
+| run.sh.grd | grd deploy contract (`--systemd=always --cgroupns=host -v /sys/fs/cgroup`); secrets RDP_PW+GUAC_PW (RFB_PW optional) + the `/guacamole/` health path; secrets via bind-mounted `/etc/fedora-desktop/secrets.env`. **CONTROL-PLANE** + STOP-AND-SURFACE (needs a cgroup-v2-delegating host) |
+| Containerfile.krdp | **krdp lineage** base image (KDE Plasma-Wayland / KRdp+krfb; ARGs as grd; runs install-krdp.sh; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
+| install-krdp.sh | krdp-lineage install: harness as systemd units + minimal Plasma-6 Wayland leaf set + KRdp (RDP) + krfb (VNC) + xdg-desktop-portal-kde + kpipewire + the Guacamole web door (guacd/Tomcat/.war + guacamole-auth-ban). Same enable/linger/marker pattern (lineage=krdp) |
+| entrypoint-krdp.sh | krdp first-boot oneshot: core password, ssh-key sync, KRdp TLS PEM, Guacamole web door (user-mapping with `ENABLE_AUDIO` toggle → KRdp loopback RDP), krdpserverrc + a systemd-`--user` ExecStart drop-in passing `--username core --password $RDP_PW` (bypasses KWallet), krfb-virtualmonitor staging. Session bringup HOST-VALIDATED |
+| run.sh.krdp | krdp deploy contract (systemd-PID-1, secrets RDP_PW+GUAC_PW with RFB_PW optional, mirrors run.sh.grd). **CONTROL-PLANE** + STOP-AND-SURFACE |
 | distrobox.ini | claudebox manifest: image pin, `pre_init_hook` drops Anthropic `latest`-channel `.repo`, `additional_packages` |
 | claudebox-init.sh | post-assemble host bridges (CONTAINER_HOST export + in-box `claudebox-rebuild` flag-writer) over the quote-safe `podman exec` channel |
 | claudebox-assemble.sh | first-boot + every-rebuild: `distrobox rm -f` → `distrobox assemble create` → first-enter retry → bridges + **policy stamp (managed-settings.json + policy/hooks/gate-push.sh into /etc/claude-code/)**. **CONTROL-PLANE (it stamps the guardrails)** |

@@ -4,17 +4,18 @@
 # base — the fedora-dev harness (claudebox + daily self-update + nested rootless
 # podman) re-expressed as systemd units. Third sibling to the xrdp lineage
 # (Containerfile) and the grd lineage (Containerfile.grd); all three share the
-# harness, the app set, the policy, the ratified Principle-2(c), AND the
-# symmetric WEB_GATEWAY selector — only the desktop + the native servers differ.
+# harness, the app set, the policy, the ratified Principle-2(c), AND the Apache
+# Guacamole-only web gateway — only the desktop + the native servers differ.
 #
 # 3-AXIS ACCESS, all converging on ONE Plasma Wayland session:
 #   RDP  — KRdp native (krdpserver, :3389, TLS), tailnet-only
 #   VNC  — krfb native (krfb-virtualmonitor, libvncserver, :5900), tailnet-only
-#   web  — per WEB_GATEWAY (the SOLE public desktop door, TLS :8443):
-#            guacamole — guacd -> KRdp's loopback RDP -> HTML5 (RDP-grade; the
-#                        guacamole.war is the lone class-(c) artifact, GPG-verified)
-#            novnc     — noVNC + websockify -> krfb's loopback VNC (ALL class-(a))
-#          Default guacamole; identical selector to the xrdp + grd lineages.
+#   web  — Apache Guacamole ONLY (the SOLE public desktop door, TLS :8443):
+#            guacd -> KRdp's loopback RDP -> HTML5 (RDP-grade; the guacamole.war is
+#            the lone class-(c) artifact, GPG-verified). noVNC was removed
+#            fleet-wide — the web door is a PUBLIC (non-tailnet) door, and noVNC's
+#            VNC VncAuth (only 8 chars effective) is unacceptable there; Guacamole
+#            authenticates with a strong password + brute-force lockout (auth-ban).
 #
 # HEADLESS (binding prerequisite — see CLAUDE.md): runs with NO monitor/GPU/seat;
 # the Plasma session is kwin_wayland --virtual / krfb-virtualmonitor rendered by
@@ -33,19 +34,16 @@
 ARG FEDORA_VERSION=44
 FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
 
-# Pinned Apache Guacamole .war (the lone class-(c) artifact — guacamole gateway
-# only) + its release-signing key fingerprint, GPG-verified before use
-# (PRINCIPLE 2c). Shared with the xrdp + grd lineages. WEB_GATEWAY selects the
-# public browser door (guacamole|novnc); novnc needs no class-(c) artifact.
+# Pinned Apache Guacamole .war (the lone class-(c) artifact) + its release-signing
+# key fingerprint, GPG-verified before use (PRINCIPLE 2c). Shared with the xrdp +
+# grd lineages. The web gateway is Apache Guacamole ONLY (noVNC removed fleet-wide).
 ARG GUAC_VERSION=1.6.0
 ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
-ARG WEB_GATEWAY=guacamole
 
 ENV LANG=en_US.UTF-8
 
 COPY install-krdp.sh /tmp/install-krdp.sh
 RUN GUAC_VERSION="${GUAC_VERSION}" GUAC_GPG_FP="${GUAC_GPG_FP}" \
-    WEB_GATEWAY="${WEB_GATEWAY}" \
     bash /tmp/install-krdp.sh && rm /tmp/install-krdp.sh
 
 COPY --chmod=755 entrypoint-krdp.sh /usr/local/bin/entrypoint-krdp.sh

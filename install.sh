@@ -23,7 +23,7 @@ DNF="dnf -y --setopt=install_weak_deps=False"
 # guacamole.war pin + signing-key fingerprint were not threaded through — an empty
 # version/fingerprint would silently fetch or "verify" the wrong artifact. (rclone
 # + jakartaee-migration are Fedora class-(a) packages now — no version pin needed;
-# DESKTOP_ENV / WEB_GATEWAY carry their own defaults below.)
+# DESKTOP_ENV carries its own default below; the web gateway is Guacamole-only.)
 : "${GUAC_VERSION:?GUAC_VERSION ARG must be passed from Containerfile}"
 : "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed from Containerfile}"
 
@@ -228,9 +228,9 @@ EOF
 # (Fedora repos, leaf packages, install_weak_deps=False — PRINCIPLE 3.)
 #   Remote access:   xrdp xorgxrdp openh264 (RDP door + the Xorg :10 session);
 #                    tigervnc-x11-server (hard dep of xrdp) = the x0vncserver VNC
-#                    head. The browser door is the WEB_GATEWAY selector below
-#                    (guacamole = guacd/libguac/tomcat + the .war; novnc = noVNC +
-#                    websockify). rclone (Fedora class-a) = the cloud-sync engine.
+#                    head (native VNC :5900, tailnet-only). The browser door is
+#                    Apache Guacamole only (guacd/libguac/tomcat + the .war).
+#                    rclone (Fedora class-a) = the cloud-sync engine.
 #   XFCE desktop:    xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar
 #   X/Electron deps: dbus-x11 xorg-x11-xauth xdpyinfo xterm mesa-dri-drivers
 #                    mesa-libgbm fonts adwaita-icon-theme nss atk at-spi2-atk
@@ -255,25 +255,17 @@ case "$DESKTOP_ENV" in
 esac
 echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | session='$XSESSION'"
 
-# ---- WEB GATEWAY selector (ARG WEB_GATEWAY — the public browser door) --------
-# The SOLE public desktop door is the TLS web gateway on :8443, fronting the SAME
-# xrdp-owned Xorg :10 session. Two sanctioned implementations (--build-arg
-# WEB_GATEWAY=...):
-#   guacamole — Apache Guacamole (guacd -> loopback RDP :3389 -> HTML5): richest
-#               web (H.264/GFX, audio, clipboard, file-transfer). guacd/libguac +
-#               Fedora Tomcat + tomcat-jakartaee-migration are class-(a); only the
-#               guacamole.war web client is class-(c) (GPG-verified, see below).
-#               gnupg2 = the gpg CLI for that signature check.
-#   novnc     — noVNC + websockify (browser -> loopback VNC :5900 head): ALL
-#               class-(a), zero waivers; VNC-quality web. RFB_PW becomes the
-#               public web-door auth (the entrypoint serves websockify TLS :8443).
-: "${WEB_GATEWAY:=guacamole}"
-case "$WEB_GATEWAY" in
-  guacamole) WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2" ;;
-  novnc)     WEB_PKGS="novnc python3-websockify" ;;
-  *) echo "FATAL: unknown WEB_GATEWAY='$WEB_GATEWAY' (want: guacamole|novnc)" >&2; exit 1 ;;
-esac
-echo ">>> fedora-desktop web gateway: WEB_GATEWAY=$WEB_GATEWAY | pkgs='$WEB_PKGS'"
+# ---- WEB GATEWAY (the public browser door) — Apache Guacamole ONLY -----------
+# The SOLE public desktop door is the TLS web gateway on :8443, fronting the
+# xrdp-owned Xorg :10 session via guacd -> loopback RDP :3389 -> HTML5. Guacamole
+# is the ONLY web gateway: it authenticates the public door with a STRONG,
+# arbitrary-length password (GUAC_PW). **noVNC was REMOVED fleet-wide** — the web
+# gateway is a PUBLIC (non-tailnet) door, and noVNC's VNC VncAuth (only 8 chars
+# effective) is unacceptable there. guacd/libguac + Fedora Tomcat +
+# tomcat-jakartaee-migration are class-(a); only the guacamole.war web client is
+# class-(c) (GPG-verified below); gnupg2 = the gpg CLI for that check.
+WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
+echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 
 # rclone is the cloud-sync engine, now from Fedora's OWN repo (class-a) — the
 # unsigned developer rpm was dropped per the zero-base check (Fedora packages it).
@@ -337,43 +329,60 @@ done
 # fetched from Apache's OWN host over TLS, GPG-VERIFIED against the PINNED Apache
 # release-signing key (GUAC_GPG_FP) — fail-closed — then converted javax->jakarta
 # with FEDORA'S OWN tomcat-jakartaee-migration jar (class-a) for Tomcat 10.1.
-if [ "$WEB_GATEWAY" = "guacamole" ]; then
-    curl -fsSL -o /tmp/guacamole.war \
-        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war"
-    curl -fsSL -o /tmp/guacamole.war.asc \
-        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war.asc"
-    curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
-    export GNUPGHOME="$(mktemp -d)"
-    gpg --quiet --import /tmp/guac-KEYS
-    gpg --status-fd 1 --verify /tmp/guacamole.war.asc /tmp/guacamole.war 2>/dev/null \
-        | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
-        || { echo "FATAL: guacamole.war GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
-    echo "guacamole.war: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
-    rm -rf "$GNUPGHOME"; unset GNUPGHOME
-    # Fedora's CLI wrapper sets the classpath — the packaged jakartaee-migration.jar
-    # is a THIN jar (java -jar fails on a missing commons-compress); javax2jakarta
-    # runs it with the right classpath.
-    javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
-    rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
-    install -d -m 0750 -o tomcat -g tomcat /etc/guacamole
-    printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
-    # TLS connector :8443 for the web door (PKCS12 keystore minted at runtime; entrypoint).
-    sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
-fi
-# novnc path: noVNC (/usr/share/novnc) + websockify are installed above; the
-# entrypoint serves them on TLS :8443 bridging to the loopback x0vncserver :5900
-# head. The /var/lib/guac-cert TLS volume + its cert are provisioned at runtime by
-# the entrypoint (per-gateway: PKCS12 keystore for tomcat, PEM for websockify).
+curl -fsSL -o /tmp/guacamole.war \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war"
+curl -fsSL -o /tmp/guacamole.war.asc \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war.asc"
+curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+export GNUPGHOME="$(mktemp -d)"
+gpg --quiet --import /tmp/guac-KEYS
+gpg --status-fd 1 --verify /tmp/guacamole.war.asc /tmp/guacamole.war 2>/dev/null \
+    | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+    || { echo "FATAL: guacamole.war GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+echo "guacamole.war: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+rm -rf "$GNUPGHOME"; unset GNUPGHOME
+# Fedora's CLI wrapper sets the classpath — the packaged jakartaee-migration.jar
+# is a THIN jar (java -jar fails on a missing commons-compress); javax2jakarta
+# runs it with the right classpath.
+javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
+rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole
+printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
+# TLS connector :8443 for the web door (PKCS12 keystore minted at runtime; entrypoint).
+sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
+
+# ---- guacamole-auth-ban: brute-force lockout on the PUBLIC :8443 door --------
+# A SECOND class-(c) Apache Guacamole artifact (same pinned key), GPG-verified
+# fail-closed: bans a source IP after repeated failed logins. Backend-INDEPENDENT
+# (in-memory) — works with the file user-mapping, NO database. GUACAMOLE_HOME is
+# /etc/guacamole (JAVA_OPTS in entrypoint), so the extension JAR lives in
+# /etc/guacamole/extensions/. This is what makes a single strong GUAC_PW a
+# defensible PUBLIC door (a password alone, with no lockout, is brute-forceable).
+curl -fsSL -o /tmp/guac-ban.tgz \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-auth-ban-${GUAC_VERSION}.tar.gz"
+curl -fsSL -o /tmp/guac-ban.tgz.asc \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-auth-ban-${GUAC_VERSION}.tar.gz.asc"
+curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+export GNUPGHOME="$(mktemp -d)"; gpg --quiet --import /tmp/guac-KEYS
+gpg --status-fd 1 --verify /tmp/guac-ban.tgz.asc /tmp/guac-ban.tgz 2>/dev/null \
+    | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+    || { echo "FATAL: guacamole-auth-ban GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+echo "guacamole-auth-ban: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+rm -rf "$GNUPGHOME"; unset GNUPGHOME
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole/extensions
+tar -xzf /tmp/guac-ban.tgz -C /tmp
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-ban-${GUAC_VERSION}/guacamole-auth-ban-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-ban-${GUAC_VERSION}.jar"
+rm -rf /tmp/guac-ban.tgz /tmp/guac-ban.tgz.asc /tmp/guac-KEYS "/tmp/guacamole-auth-ban-${GUAC_VERSION}"
+# auth-ban defaults (5 failed attempts / 5 min -> 5-min ban) are sane; tunable via
+# ban-max-invalid-attempts / ban-address-duration etc. in guacamole.properties.
 
 # ---- xrdp: XFCE session, session persistence, GFX H.264-first ---------------
 # Bake the variant's X session-start so the entrypoint's first-boot fallback (on a
 # fresh home volume) launches the RIGHT desktop, not always XFCE.
 mkdir -p /etc/fedora-desktop
 printf '%s\n' "$XSESSION" > /etc/fedora-desktop/xsession
-# Bake the web-gateway selector too — the entrypoint reads it to start the right
-# browser door (guacd+tomcat OR websockify+novnc) and to enforce the matching
-# required secret (GUAC_PW for guacamole, RFB_PW for novnc).
-printf '%s\n' "$WEB_GATEWAY" > /etc/fedora-desktop/web-gateway
 # /etc/fedora-desktop/xsession is the SOLE source of truth for the X session-start.
 # /home/core is a declared VOLUME, so a build-time ~/.Xclients write is shadowed by
 # a fresh named volume at runtime; entrypoint.sh (re)writes ~/.Xclients from this

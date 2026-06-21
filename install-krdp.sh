@@ -1,34 +1,28 @@
 #!/usr/bin/env bash
 # fedora-desktop — KRDP lineage install (systemd-PID-1).
 # ============================================================================
-# Minimal Plasma 6 Wayland desktop + KRdp (RDP) + krfb (VNC) + a per-WEB_GATEWAY
-# web door (Guacamole fronting KRdp's loopback RDP | noVNC fronting krfb's
-# loopback VNC) + the fedora-dev harness re-expressed as systemd units + the four
-# apps. MINIMAL LEAF packages (install_weak_deps=False, PRINCIPLE 3): the Plasma
-# hard-dep closure (plasma-desktop -> kio-extras -> samba-* for smb://; the kf6-*
-# framework set) is the IRREDUCIBLE cost of a real KDE desktop (disclosed in
-# CLAUDE.md), not bloat-by-choice. HEADLESS prerequisite (CLAUDE.md): no
-# monitor/GPU/seat — kwin_wayland --virtual / krfb-virtualmonitor (software GL).
+# Minimal Plasma 6 Wayland desktop + KRdp (RDP) + krfb (VNC) + the Apache Guacamole
+# web door (fronting KRdp's loopback RDP) + the fedora-dev harness re-expressed as
+# systemd units + the four apps. MINIMAL LEAF packages (install_weak_deps=False,
+# PRINCIPLE 3): the Plasma hard-dep closure (plasma-desktop -> kio-extras -> samba-*
+# for smb://; the kf6-* framework set) is the IRREDUCIBLE cost of a real KDE desktop
+# (disclosed in CLAUDE.md), not bloat-by-choice. HEADLESS prerequisite (CLAUDE.md):
+# no monitor/GPU/seat — kwin_wayland --virtual / krfb-virtualmonitor (software GL).
 set -euxo pipefail
-: "${WEB_GATEWAY:=guacamole}"
 DNF="dnf -y --setopt=install_weak_deps=False"
 
-# ---- WEB GATEWAY selector (the public browser door, identical to xrdp+grd) ----
-#   guacamole — guacd -> KRdp's loopback RDP :3389 -> HTML5 (RDP-grade). guacd/
-#               libguac + Fedora Tomcat + jakartaee-migration are class-(a); only
-#               the guacamole.war web client is class-(c) (GPG-verified below).
-#   novnc     — noVNC + websockify -> krfb's loopback VNC :5900 head: ALL
-#               class-(a), zero waivers. RFB_PW becomes the public web-door auth.
-case "$WEB_GATEWAY" in
-  guacamole)
-    : "${GUAC_VERSION:?GUAC_VERSION ARG must be passed for the guacamole gateway}"
-    : "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed for the guacamole gateway}"
-    WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2" ;;
-  novnc)
-    WEB_PKGS="novnc python3-websockify" ;;
-  *) echo "FATAL: unknown WEB_GATEWAY='$WEB_GATEWAY' (want: guacamole|novnc)" >&2; exit 1 ;;
-esac
-echo ">>> fedora-desktop-krdp web gateway: WEB_GATEWAY=$WEB_GATEWAY | pkgs='$WEB_PKGS'"
+# ---- WEB GATEWAY (the public browser door) — Apache Guacamole ONLY ------------
+# The SOLE public desktop door is the TLS web gateway on :8443, fronting KRdp's
+# loopback RDP :3389 via guacd -> HTML5. Guacamole is the ONLY web gateway: it
+# authenticates the public door with a STRONG, arbitrary-length password (GUAC_PW).
+# **noVNC was REMOVED fleet-wide** — the web gateway is a PUBLIC (non-tailnet) door,
+# and noVNC's VNC VncAuth (only 8 chars effective) is unacceptable there. guacd/
+# libguac + Fedora Tomcat + tomcat-jakartaee-migration are class-(a); only the
+# guacamole.war web client is class-(c) (GPG-verified below); gnupg2 = the gpg CLI.
+: "${GUAC_VERSION:?GUAC_VERSION ARG must be passed from Containerfile}"
+: "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed from Containerfile}"
+WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
+echo ">>> fedora-desktop-krdp web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 
 # ---- vendor dnf repos (class b, gpgcheck=1) — shared with the xrdp+grd lineages
 curl -fsSL https://pkgs.tailscale.com/stable/fedora/tailscale.repo -o /etc/yum.repos.d/tailscale.repo
@@ -118,59 +112,61 @@ EOF
     sed -i 's|^Exec=\(\S*\)|Exec=\1 --no-sandbox|' /usr/share/applications/1password.desktop || true
 
 # ============================================================================
-# Per-WEB_GATEWAY web door setup
+# WEB GATEWAY: Apache Guacamole web door setup
 # ============================================================================
 # 0700 root: bind-mount point for the runtime secrets.env (RDP_PW etc.) — keep it
 # non-traversable so only root (PID 1 / the firstboot oneshot) can read it.
 install -d -m 0700 /etc/fedora-desktop
-if [ "$WEB_GATEWAY" = "guacamole" ]; then
-    # ---- Guacamole webapp: Apache .war (the lone class-c), GPG-verified --------
-    curl -fsSL -o /tmp/guacamole.war \
-        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war"
-    curl -fsSL -o /tmp/guacamole.war.asc \
-        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war.asc"
-    curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
-    export GNUPGHOME="$(mktemp -d)"; gpg --quiet --import /tmp/guac-KEYS
-    gpg --status-fd 1 --verify /tmp/guacamole.war.asc /tmp/guacamole.war 2>/dev/null \
-        | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
-        || { echo "FATAL: guacamole.war GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
-    echo "guacamole.war: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
-    rm -rf "$GNUPGHOME"; unset GNUPGHOME
-    javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
-    rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
-    # 0751 (not 0750): core (other) must TRAVERSE this tomcat-owned dir to read its
-    # own core-owned RDP TLS key (krdp-key.pem, 0600) — else KRdp's RDP can't start.
-    install -d -m 0751 -o tomcat -g tomcat /etc/guacamole /var/lib/guac-cert
-    printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
-    # Guacamole fronts KRdp's LOOPBACK RDP (127.0.0.1:3389, security=tls). The web
-    # user-mapping (creds + the KRdp TLS params) is written at first boot by
-    # entrypoint-krdp (it needs the runtime RDP_PW/GUAC_PW). TLS :8443 connector:
-    sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
-    systemctl enable guacd.service tomcat.service
-else
-    # ---- noVNC: a websockify SYSTEM unit serving /usr/share/novnc on TLS :8443,
-    # bridging to krfb's loopback VNC :5900 head. The TLS PEM cert is minted at
-    # first boot by entrypoint-krdp (core-owned). Restart=always rides out the
-    # race until the cert exists + krfb's :5900 comes up under core's session.
-    install -d -m 0750 -o core -g core /var/lib/guac-cert
-    cat > /etc/systemd/system/fedora-desktop-novnc.service <<'EOF'
-[Unit]
-Description=noVNC web gateway (websockify TLS :8443 -> loopback krfb VNC :5900)
-After=network-online.target
-Wants=network-online.target
-[Service]
-User=core
-Group=core
-ExecStart=/usr/bin/websockify --web=/usr/share/novnc --ssl-only \
-    --cert=/var/lib/guac-cert/novnc-cert.pem --key=/var/lib/guac-cert/novnc-key.pem \
-    8443 127.0.0.1:5900
-Restart=always
-RestartSec=3
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl enable fedora-desktop-novnc.service
-fi
+# ---- Guacamole webapp: Apache .war (the lone class-c), GPG-verified ------------
+curl -fsSL -o /tmp/guacamole.war \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war"
+curl -fsSL -o /tmp/guacamole.war.asc \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war.asc"
+curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+export GNUPGHOME="$(mktemp -d)"; gpg --quiet --import /tmp/guac-KEYS
+gpg --status-fd 1 --verify /tmp/guacamole.war.asc /tmp/guacamole.war 2>/dev/null \
+    | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+    || { echo "FATAL: guacamole.war GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+echo "guacamole.war: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+rm -rf "$GNUPGHOME"; unset GNUPGHOME
+javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
+rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
+# 0751 (not 0750): core (other) must TRAVERSE this tomcat-owned dir to read its
+# own core-owned RDP TLS key (krdp-key.pem, 0600) — else KRdp's RDP can't start.
+install -d -m 0751 -o tomcat -g tomcat /etc/guacamole /var/lib/guac-cert
+printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
+# Guacamole fronts KRdp's LOOPBACK RDP (127.0.0.1:3389, security=tls). The web
+# user-mapping (creds + the KRdp TLS params) is written at first boot by
+# entrypoint-krdp (it needs the runtime RDP_PW/GUAC_PW). TLS :8443 connector:
+sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
+
+# ---- guacamole-auth-ban: brute-force lockout on the PUBLIC :8443 door --------
+# A SECOND class-(c) Apache Guacamole artifact (same pinned key), GPG-verified
+# fail-closed: bans a source IP after repeated failed logins. Backend-INDEPENDENT
+# (in-memory) — works with the file user-mapping, NO database. GUACAMOLE_HOME is
+# /etc/guacamole (JAVA_OPTS in entrypoint), so the extension JAR lives in
+# /etc/guacamole/extensions/. This is what makes a single strong GUAC_PW a
+# defensible PUBLIC door (a password alone, with no lockout, is brute-forceable).
+curl -fsSL -o /tmp/guac-ban.tgz \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-auth-ban-${GUAC_VERSION}.tar.gz"
+curl -fsSL -o /tmp/guac-ban.tgz.asc \
+    "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-auth-ban-${GUAC_VERSION}.tar.gz.asc"
+curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+export GNUPGHOME="$(mktemp -d)"; gpg --quiet --import /tmp/guac-KEYS
+gpg --status-fd 1 --verify /tmp/guac-ban.tgz.asc /tmp/guac-ban.tgz 2>/dev/null \
+    | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+    || { echo "FATAL: guacamole-auth-ban GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+echo "guacamole-auth-ban: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+rm -rf "$GNUPGHOME"; unset GNUPGHOME
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole/extensions
+tar -xzf /tmp/guac-ban.tgz -C /tmp
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-ban-${GUAC_VERSION}/guacamole-auth-ban-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-ban-${GUAC_VERSION}.jar"
+rm -rf /tmp/guac-ban.tgz /tmp/guac-ban.tgz.asc /tmp/guac-KEYS "/tmp/guacamole-auth-ban-${GUAC_VERSION}"
+# auth-ban defaults (5 failed attempts / 5 min -> 5-min ban) are sane; tunable via
+# ban-max-invalid-attempts / ban-address-duration etc. in guacamole.properties.
+systemctl enable guacd.service tomcat.service
 
 # ---- first-boot config oneshot (TLS, KRdp rdp + krfb vnc, ssh keys, web door) -
 # entrypoint-krdp.sh runs ONCE under systemd; it reads the runtime secrets from
@@ -196,9 +192,8 @@ systemctl enable fedora-desktop-krdp-firstboot.service
 # ---- bake the lineage markers (headless Plasma Wayland) ----------------------
 printf 'krdp\n'           > /etc/fedora-desktop/lineage
 printf 'plasma-wayland\n' > /etc/fedora-desktop/xsession
-printf '%s\n' "$WEB_GATEWAY" > /etc/fedora-desktop/web-gateway
 
 # (machine-id is handled by systemd-machine-id-setup at boot.)
 $DNF clean all
 rm -rf /var/cache/dnf /var/cache/libdnf5
-echo ">>> fedora-desktop-krdp installed: Plasma-6 Wayland + KRdp(RDP) + krfb(VNC) + ${WEB_GATEWAY} web + apps (systemd-PID-1, headless)"
+echo ">>> fedora-desktop-krdp installed: Plasma-6 Wayland + KRdp(RDP) + krfb(VNC) + Guacamole web + apps (systemd-PID-1, headless)"
