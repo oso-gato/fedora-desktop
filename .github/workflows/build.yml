@@ -186,7 +186,12 @@ jobs:
               for f in "$d"/*; do
                 [ -f "$f" ] && [ -x "$f" ] || continue
                 case " $allow " in *" $f "*) continue ;; esac
-                rpm -qf "$f" >/dev/null 2>&1 || { echo "NON-RPM ON PATH: $f"; bad=1; }
+                # rpm-owned directly, OR a symlink whose target is rpm-owned: the
+                # 1Password vendor rpm scriptlet-creates /usr/bin/1password ->
+                # /opt/1Password/1password (the TARGET is rpm-owned; the link path is
+                # in no manifest). A genuinely loose binary fails BOTH checks.
+                rpm -qf "$f" >/dev/null 2>&1 || rpm -qf "$(readlink -f "$f")" >/dev/null 2>&1 \
+                  || { echo "NON-RPM ON PATH: $f"; bad=1; }
               done
             done
             [ "$bad" = 0 ] || { echo "::error::loose non-rpm binary on PATH (Principle 2c)"; exit 1; }
