@@ -15,9 +15,16 @@
 #   RFB_PW='…'  (OPTIONAL) arms the :5900 TAILNET-ONLY VNC mirror for native VNC
 #               viewers. VncAuth is weak (8 chars) — fine, since :5900 is tailnet-only.
 #   WEB_PORT    (optional) host port for the public web door. DEFAULT 8443.
+#   FLEET_SSH   (optional) clientless browser-SSH bastion tiles to OTHER fleet hosts,
+#               shown on the SAME public web door — VPN-slot-free fleet access from any
+#               device incl. iOS on another VPN (see ZTNA-ACCESS.md). ';'-separated
+#               "label host [port] [user]", e.g.
+#               FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core'.
+#               Reached over the desktop's SERVER-SIDE tailnet; prefer keyless
+#               Tailscale-SSH, else FLEET_SSH_KEY=/path/to/key (bind-mounted, not baked).
 #   TS_AUTHKEY  (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
-#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [TS_AUTHKEY=…] ./run.sh
+#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [FLEET_SSH='…'] [TS_AUTHKEY=…] ./run.sh
 #
 # ACCESS MODEL (load-bearing — do NOT widen the publish set):
 #   PUBLIC internet door — the ONLY -p publish:
@@ -44,7 +51,12 @@ set -eu
 : "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
 HEALTH_URL='https://127.0.0.1:8443/guacamole/'; BACKEND_PORT=3389
 IMAGE="${IMAGE:-localhost/fedora-desktop:latest}"
-TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"
+TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; FLEET_SSH="${FLEET_SSH:-}"
+# FLEET_SSH_KEY (optional) — a private key file for the FLEET_SSH browser-SSH tiles
+# (else keyless Tailscale-SSH is used). Bind-mounted READ-ONLY; NEVER baked into the
+# image (Principle 5). Empty array expands to nothing when unset.
+FLEET_SSH_KEY="${FLEET_SSH_KEY:-}"; KEY_MOUNT=()
+[ -n "$FLEET_SSH_KEY" ] && KEY_MOUNT=(-v "$FLEET_SSH_KEY":/etc/fedora-desktop/fleet_ssh_key:ro)
 # WEB_PORT — the web gateway is the ONLY public door; its host port is changeable
 # at spin-up (DEFAULT 8443). Everything else — ssh, mosh, RDP, VNC — is TAILNET-ONLY
 # (never published; reached over the tailnet IP / Tailscale SSH).
@@ -59,7 +71,8 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 { printf 'RDP_PW=%s\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
-  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"; } > "$SECRETS"
+  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"
+  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%s\n'  "$FLEET_SSH"; } > "$SECRETS"
 
 podman run -d --name fedora-desktop \
     --hostname fedora-desktop \
@@ -71,6 +84,7 @@ podman run -d --name fedora-desktop \
     --device /dev/fuse \
     --security-opt label=disable \
     -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
+    "${KEY_MOUNT[@]}" \
     -v fedora-desktop-home:/home/core \
     -v fedora-desktop-state:/var/lib/tailscale \
     -v fedora-desktop-cert:/var/lib/guac-cert \
@@ -86,6 +100,7 @@ echo "ACTION REQUIRED login.tailscale.com link (one-time per state volume)."
 echo
 echo "Reach it:"
 echo "  web  https://<public-ip>:${WEB_PORT}/guacamole/   (PUBLIC, the only public door; login core / GUAC_PW)"
+[ -n "$FLEET_SSH" ] && echo "       + clientless fleet SSH tiles on the SAME door: $(printf '%s' "$FLEET_SSH" | tr ';' ',')   (no VPN needed)"
 echo "  ssh  ssh core@<tailnet-ip>                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
 echo "  mosh mosh --ssh='ssh' core@<tailnet-ip>    (over the tailnet — TAILNET-ONLY)"
 echo "  RDP  <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"

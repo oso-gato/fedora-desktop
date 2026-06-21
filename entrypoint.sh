@@ -143,15 +143,38 @@ if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
 else
     RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
 fi
-cat > /etc/guacamole/user-mapping.xml <<EOF
-<user-mapping>
-  <authorize username="core" password="${GUAC_PW}">
+# Build the web-login -> connections map. The desktop RDP tile is ALWAYS present.
+# FLEET_SSH (optional) adds clientless browser-SSH tiles to the OTHER fleet hosts,
+# turning the one PUBLIC web door into a VPN-slot-free fleet bastion: the user's
+# device needs NO VPN/tailnet — Safari -> :8443 -> guacd -> the desktop's
+# SERVER-SIDE tailnet reaches dev/host. (Rationale: no client-VPN ZTNA, Twingate
+# included, escapes iOS's single-VPN-slot rule; a clientless web door is the only
+# path that does — see ZTNA-ACCESS.md.)
+#   FLEET_SSH format: ';'-separated entries, each "label host [port] [user]", e.g.
+#     FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core'
+#   Auth: prefer KEYLESS Tailscale-SSH (the desktop's tailnet identity authorizes
+#   the hop; the target must allow it in the tailnet SSH ACL -> no secret here).
+#   Fallback: a runtime private key bind-mounted to /etc/fedora-desktop/fleet_ssh_key
+#   (Principle 5 — NEVER baked into a layer); applied to every SSH tile when present.
+# XML-escape user-supplied values (& < > ") so a strong GUAC_PW/RDP_PW or a fleet
+# host label cannot break the generated user-mapping.xml (malformed XML = auth
+# silently fails). `&` first, or the others would double-escape.
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+GUAC_PW_X="$(xml_escape "${GUAC_PW}")"
+RDP_PW_X="$(xml_escape "${RDP_PW}")"
+ssh_keyparam=""
+[ -r /etc/fedora-desktop/fleet_ssh_key ] && \
+    ssh_keyparam="<param name=\"private-key\">$(cat /etc/fedora-desktop/fleet_ssh_key)</param>"
+{
+  printf '<user-mapping>\n'
+  printf '  <authorize username="core" password="%s">\n' "${GUAC_PW_X}"
+  cat <<RDPCONN
     <connection name="fedora-desktop">
       <protocol>rdp</protocol>
       <param name="hostname">127.0.0.1</param>
       <param name="port">3389</param>
       <param name="username">core</param>
-      <param name="password">${RDP_PW}</param>
+      <param name="password">${RDP_PW_X}</param>
       <param name="ignore-cert">true</param>
       <param name="security">any</param>
       <param name="resize-method">display-update</param>
@@ -162,9 +185,25 @@ cat > /etc/guacamole/user-mapping.xml <<EOF
       <param name="color-depth">24</param>
       ${RDP_AUDIO_PARAM}
     </connection>
-  </authorize>
-</user-mapping>
-EOF
+RDPCONN
+  if [ -n "${FLEET_SSH:-}" ]; then
+    printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
+      [ -n "$f_label" ] && [ -n "$f_host" ] || continue
+      f_port="${f_port:-22}"; case "$f_port" in (*[!0-9]*|'') f_port=22 ;; esac
+      cat <<SSHCONN
+    <connection name="ssh-$(xml_escape "$f_label")">
+      <protocol>ssh</protocol>
+      <param name="hostname">$(xml_escape "$f_host")</param>
+      <param name="port">${f_port}</param>
+      <param name="username">$(xml_escape "${f_user:-core}")</param>
+      ${ssh_keyparam}
+    </connection>
+SSHCONN
+    done
+  fi
+  printf '  </authorize>\n'
+  printf '</user-mapping>\n'
+} > /etc/guacamole/user-mapping.xml
 chown tomcat:tomcat /etc/guacamole/user-mapping.xml
 chmod 600 /etc/guacamole/user-mapping.xml
 # guacamole.properties (guacd loopback) is written at build; auth-ban extension is

@@ -264,7 +264,12 @@ echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | ses
 # effective) is unacceptable there. guacd/libguac + Fedora Tomcat +
 # tomcat-jakartaee-migration are class-(a); only the guacamole.war web client is
 # class-(c) (GPG-verified below); gnupg2 = the gpg CLI for that check.
-WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
+# libguac-client-ssh (class-(a)) adds OPTIONAL clientless browser-SSH tiles to the
+# OTHER fleet hosts (the FLEET_SSH bastion path — see entrypoint.sh + ZTNA-ACCESS.md):
+# from any device (incl. iOS on another VPN) Safari -> :8443 -> guacd -> the
+# SERVER-SIDE tailnet, so no VPN slot is consumed on the client. Inert unless
+# FLEET_SSH is set at runtime.
+WEB_PKGS="guacd libguac-client-rdp libguac-client-ssh tomcat tomcat-jakartaee-migration gnupg2"
 echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 
 # rclone is the cloud-sync engine, now from Fedora's OWN repo (class-a) — the
