@@ -1,0 +1,12 @@
+# This directory holds PreToolUse policy hooks stamped into the claudebox
+# alongside managed-settings.json (by claudebox-assemble.sh).
+#
+# Expected (authored separately by the dedicated hook agent):
+#   gate-push.sh — the PROMOTION-GATE PreToolUse hook. Blocks git push /
+#   gh pr merge / gh pr create --merge / gh api .../merges|/merge / wrapper
+#   scripts UNLESS a one-shot approval marker (written by the clickable
+#   decision flow) is present. Referenced by policy/managed-settings.json's
+#   managed PreToolUse hook on Bash. See policy/CLAUDE.md "THE PROMOTION GATE".
+#
+# This .gitkeep keeps the directory present so the Containerfile's
+# `COPY policy/hooks/` resolves before gate-push.sh lands.

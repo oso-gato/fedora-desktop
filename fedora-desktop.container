@@ -1,0 +1,121 @@
+# fedora-desktop.container — systemd Quadlet for fedora-desktop.
+#
+# DROP-IN PATH (rootless / user):   ~/.config/containers/systemd/
+# DROP-IN PATH (rootful / system):  /etc/containers/systemd/
+#
+# systemd-generator reads this on `systemctl --user daemon-reload` and emits
+# `fedora-desktop.service`. Manage via:
+#   systemctl --user start fedora-desktop.service
+#   systemctl --user status fedora-desktop.service
+#   journalctl --user -u fedora-desktop.service
+#
+# RUNTIME SECRETS (PRINCIPLE 5 — never in a layer):
+#   RDP_PW   (required) core's RDP/system password
+#   GUAC_PW  (required) Guacamole web-login password
+#   RFB_PW   (optional) arms the :5900 same-session VNC mirror (tailnet-only)
+#   TS_AUTHKEY (optional) unattended tailnet join
+# Provide them as podman secrets (preferred) — `podman secret create
+# fedora-desktop-rdp-pw -` etc. — and mount them as env via the Secret= lines
+# below, OR via an operator-managed EnvironmentFile (NOT committed). The
+# entrypoint fails fast when RDP_PW or GUAC_PW is missing.
+
+[Unit]
+Description=fedora-desktop — XFCE remote workstation for the vault/wiki + maintainer dev
+Documentation=https://github.com/oso-gato/fedora-desktop
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/oso-gato/fedora-desktop:latest
+ContainerName=fedora-desktop
+# Stable in-container hostname (Tailscale node name, RDP cert CN context).
+# Without this, podman falls back to the truncated container ID, which
+# regenerates on every recreate/refresh. Mirrors run.sh's --hostname.
+HostName=fedora-desktop
+# Pull policy: MISSING, not newer. The host workload-refresh harness is the SOLE
+# puller — it runs an explicit `podman pull` + digest-compare BEFORE restarting
+# this unit, so a plain restart uses the LOCAL image and never re-contacts the
+# registry on its own. Load-bearing for the harness's auto-rollback: on a health
+# failure it retags :latest to the prior-good digest LOCALLY and restarts;
+# Pull=newer would re-pull the (bad) registry :latest and defeat the rollback.
+# Do NOT change to Pull=newer/always.
+Pull=missing
+# Label the container for `podman auto-update` discoverability. Actual update
+# cadence is driven by the host workload-refresh harness, not the global timer.
+AutoUpdate=registry
+# Unit considered "active" when the healthcheck transitions to healthy. Combined
+# with the host's rollback logic, a failed-to-healthy new image triggers
+# retag-to-prior-digest and restart.
+Notify=healthy
+
+# Runtime args — mirror of run.sh.
+# NET_ADMIN: tailscaled programs the nft firewall + mosh. SYS_ADMIN: the nested
+# claudebox (`distrobox enter`) calls sethostname() to name the inner box;
+# podman's default seccomp gates sethostname/setdomainname behind CAP_SYS_ADMIN
+# and seccomp is NOT namespace-aware, so without it the first-boot claudebox
+# assemble dies with `crun: sethostname: Operation not permitted`. Deliberate —
+# do NOT remove: it breaks the nested dev box. Bounded by the rootless userns
+# (uid 1000, subuid 10000-64999), NOT host root; keeps the FULL default seccomp
+# profile active. Composes with label=disable below.
+AddCapability=NET_ADMIN SYS_ADMIN
+AddDevice=/dev/net/tun
+AddDevice=/dev/fuse
+# --shm-size: XFCE/Chromium-Electron (Obsidian, VS Code, 1Password) need a larger
+# /dev/shm than podman's 64MB default or they crash/blank.
+ShmSize=1g
+# SELinux label separation is INTENTIONALLY OFF. Nested rootless podman +
+# fuse-overlayfs on the home volume + the passed /dev/fuse and /dev/net/tun
+# cannot run under container_t confinement (SELinux denies the overlay mount +
+# device access). Deliberate, reviewed trade-off — NOT a bug to "harden" away:
+# removing it breaks nested builds. Blast radius is bounded by rootless +
+# user-namespace (uid 1000, subuid 10000-64999), NOT by SELinux; the HOST stays
+# enforcing. See policy/CLAUDE.md OPERATING FACTS.
+SecurityLabelDisable=true
+
+# Persistent volumes (named) — survive container recreation and image refresh.
+#   home   — vault working copy, tokens, OAuth, box state, Claude credentials
+#   state  — tailnet identity + ssh host keys
+#   cert   — the minted Guacamole TLS keystore
+Volume=fedora-desktop-home:/home/core
+Volume=fedora-desktop-state:/var/lib/tailscale
+Volume=fedora-desktop-cert:/var/lib/guac-cert
+
+# PUBLIC port — the web gateway is the ONLY door to the internet (see run.sh
+# ACCESS MODEL). To change the public host port, edit the LEFT side below (the
+# container side stays 8443); the run.sh path uses WEB_PORT for the same purpose.
+# ssh (:22), mosh (UDP 61001-62000), RDP (:3389) and VNC (:5900) are TAILNET-ONLY:
+# DELIBERATELY NOT published (reached only over the tailnet IP / Tailscale SSH) and
+# dropped on non-tailscale0 interfaces by the in-container nft guard.
+# Do NOT add PublishPort lines for 22 / 3389 / 5900 / mosh.
+PublishPort=8443:8443
+
+# Runtime secrets — supplied per-door at spin-up (the host claudebox ASKS the
+# operator; see README DEPLOY CONTRACT). Preferred: podman secrets surfaced as env
+# (uncomment after `podman secret create fedora-desktop-<name> -`).
+#   RDP_PW   REQUIRED — core's system/RDP password (STRONG; the RDP door + the web SSO).
+#   GUAC_PW  REQUIRED for the guacamole gateway — the PUBLIC web password (STRONG).
+#   RFB_PW   OPTIONAL — the tailnet-only :5900 native-VNC mirror password (else it
+#            falls back to RDP_PW). Not a public door; noVNC was removed fleet-wide.
+#   Secret=fedora-desktop-rdp-pw,type=env,target=RDP_PW
+#   Secret=fedora-desktop-guac-pw,type=env,target=GUAC_PW
+#   Secret=fedora-desktop-rfb-pw,type=env,target=RFB_PW
+#   Secret=fedora-desktop-ts-authkey,type=env,target=TS_AUTHKEY
+# Or, for an operator-managed (uncommitted) env file:
+#   EnvironmentFile=%h/.config/fedora-desktop/secrets.env
+
+# Health = the Guacamole web page returns 200 over TLS. This proves Tomcat +
+# guacd + the webapp are all serving, which is the only public desktop door.
+# Must match run.sh's --health-cmd. curl + bash are present in the base image.
+HealthCmd=bash -c "[ $(curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:8443/guacamole/) = 200 ]"
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

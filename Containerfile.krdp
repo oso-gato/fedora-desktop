@@ -1,0 +1,73 @@
+# fedora-desktop — KRDP lineage (Containerfile.krdp)
+# ============================================================================
+# The KDE camp: Plasma 6 (Wayland) + KRdp (RDP) + krfb (VNC) on a systemd-PID-1
+# base — the fedora-dev harness (claudebox + daily self-update + nested rootless
+# podman) re-expressed as systemd units. Third sibling to the xrdp lineage
+# (Containerfile) and the grd lineage (Containerfile.grd); all three share the
+# harness, the app set, the policy, the ratified Principle-2(c), AND the Apache
+# Guacamole-only web gateway — only the desktop + the native servers differ.
+#
+# 3-AXIS ACCESS, all converging on ONE Plasma Wayland session:
+#   RDP  — KRdp native (krdpserver, :3389, TLS), tailnet-only
+#   VNC  — krfb native (krfb-virtualmonitor, libvncserver, :5900), tailnet-only
+#   web  — Apache Guacamole ONLY (the SOLE public desktop door, TLS :8443):
+#            guacd -> KRdp's loopback RDP -> HTML5 (RDP-grade; the guacamole.war is
+#            the lone class-(c) artifact, GPG-verified). noVNC was removed
+#            fleet-wide — the web door is a PUBLIC (non-tailnet) door, and noVNC's
+#            VNC VncAuth (only 8 chars effective) is unacceptable there; Guacamole
+#            authenticates with a strong password + brute-force lockout (auth-ban).
+#
+# HEADLESS (binding prerequisite — see CLAUDE.md): runs with NO monitor/GPU/seat;
+# the Plasma session is kwin_wayland --virtual / krfb-virtualmonitor rendered by
+# software GL (llvmpipe). Any dependence on a real display/GPU/seat is a defect.
+#
+# MINIMALISM (Principle 3 — minimum RELATIVE to the chosen capability): minimal
+# LEAF packages (install_weak_deps=False). A real Plasma desktop irreducibly
+# carries the KDE hard-dep closure (plasma-desktop -> kio-extras -> samba-* libs
+# for smb://; the kf6-* framework set) — disclosed in CLAUDE.md, NOT bloat.
+#
+# CONTROL-PLANE / STOP-AND-SURFACE: systemd-PID-1 requires the HOST to grant
+# cgroup-v2 delegation + writable /sys/fs/cgroup. Deploy only on a delegating
+# host (Fedora CoreOS-class, or `podman --systemd=always` with delegation) via
+# run.sh.krdp (the SOLE sanctioned krdp deploy contract; no Quadlet yet) — never
+# the xrdp run.sh.
+ARG FEDORA_VERSION=44
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+
+# Pinned Apache Guacamole .war (the lone class-(c) artifact) + its release-signing
+# key fingerprint, GPG-verified before use (PRINCIPLE 2c). Shared with the xrdp +
+# grd lineages. The web gateway is Apache Guacamole ONLY (noVNC removed fleet-wide).
+ARG GUAC_VERSION=1.6.0
+ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
+
+ENV LANG=en_US.UTF-8
+
+COPY install-krdp.sh /tmp/install-krdp.sh
+RUN GUAC_VERSION="${GUAC_VERSION}" GUAC_GPG_FP="${GUAC_GPG_FP}" \
+    bash /tmp/install-krdp.sh && rm /tmp/install-krdp.sh
+
+COPY --chmod=755 entrypoint-krdp.sh /usr/local/bin/entrypoint-krdp.sh
+
+# Shared box-assembly seed (identical to the xrdp + grd lineages) — the claudebox
+# machinery + policy + helper scripts. Under systemd-PID-1 the claudebox runs as
+# a `systemd --user` service for core (loginctl enable-linger), the idiomatic
+# home for nested rootless podman.
+COPY distrobox.ini claudebox-init.sh box-rebuild.sh claudebox-daily.sh \
+     claudebox-assemble.sh README.md CLAUDE.md /usr/local/share/fedora-dev/
+COPY policy/ /usr/local/share/fedora-dev/policy/
+COPY --chmod=755 bin/claude bin/claudebox-rebuild /usr/local/bin/
+COPY bin/ /usr/local/share/fedora-dev/bin/
+COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
+
+VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert"]
+
+# EXPOSE is metadata only (run.sh.krdp / the Quadlet own the publish set). ONLY
+# 8443 (web gateway), 4444->22 (ssh), mosh are public; 3389 (KRdp RDP) + 5900
+# (krfb VNC) are TAILNET-ONLY.
+EXPOSE 22 8443 3389 5900 61001-62000/udp
+
+# systemd is PID 1 — the Plasma-session/KRdp requirement. STOPSIGNAL per the
+# systemd container convention. entrypoint-krdp.sh runs as a first-boot oneshot
+# unit (installed by install-krdp.sh), NOT as PID 1.
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/sbin/init"]

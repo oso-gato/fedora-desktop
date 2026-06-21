@@ -1,0 +1,6 @@
+# local ultra-verify / workflow scratch (never part of the image source)
+.ultra-verify.js
+# editor / OS noise
+*.swp
+*~
+.DS_Store
