@@ -234,7 +234,11 @@ compositor stack the X11/xrdp build discards.)
 
 fedora-desktop ships **two lineages** in this one repo. They share the harness (PART A), the
 app set, the policy, Principle 2(c), AND the **same SOLE web gate — Apache Guacamole on :8443** —
-only the DESKTOP + the INIT contract + the NATIVE remote servers differ. Each lineage exposes a
+only the DESKTOP + the INIT contract + the NATIVE remote servers differ. **Both `run.sh` and
+`run.sh.grd` default the public web door to host `:8443`, so deploying BOTH lineages on one host
+REQUIRES a DISTINCT `WEB_PORT` per container** (it is the only published port — everything else is
+tailnet-only — so it is the only conflict; names/volumes/tailnet-hostnames are already distinct).
+See the README DEPLOY CONTRACT ⚠️ callout — the host claudebox must set distinct `WEB_PORT`s. Each lineage exposes a
 loopback **RDP :3389** (native server) AND a loopback **VNC :5900** (native server, the optional
 tailnet-only mirror); Guacamole fronts the RDP as the SOLE public :8443 door (RDP-grade browser:
 audio/clipboard/file-transfer; strong `GUAC_PW` + TOTP 2FA + the `guacamole-auth-ban` lockout + TLS;
