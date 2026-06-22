@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # guac-db-provision.sh — SINGLE SOURCE OF TRUTH for fedora-desktop's Guacamole
-# DB-backed auth + TOTP provisioning. SOURCED (not exec'd) by ALL THREE lineage
+# DB-backed auth + TOTP provisioning. SOURCED (not exec'd) by BOTH lineage
 # entrypoints — xrdp (supervised-bash) and grd (systemd) — AFTER MariaDB is
 # reachable. Keeping it in one file is deliberate: the four TOTP/DB must-dos must
 # hold byte-identically across lineages and must never drift.

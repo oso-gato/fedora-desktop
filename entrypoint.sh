@@ -235,7 +235,7 @@ echo "[db] MariaDB up on 127.0.0.1:3306 (loopback only)"
 
 # ---- provision Guacamole DB-auth + TOTP via the shared single-source helper -------
 # bin/guac-db-provision.sh (COPY'd to /usr/local/share/fedora-dev/bin/) is the ONE
-# place the four TOTP/DB must-dos live, byte-identical across all three lineages
+# place the four TOTP/DB must-dos live, byte-identical across both lineages
 # (xrdp here; grd source the same file). xrdp specifics: RDP security 'any' + pin
 # 24bpp (the cross-device session-RESUME invariant). MYSQL_ROOT + DBSOCK were defined
 # during the MariaDB bring-up above; the helper generates the loopback DB_PW itself.
