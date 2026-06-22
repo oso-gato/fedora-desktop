@@ -195,7 +195,7 @@ with them via `run.sh` / the Quadlet:
    lighter" inverts here — the image already keeps GTK3 resident for Firefox/Electron, so XFCE
    rides it while LXQt adds a net-new Qt6/KF6 runtime nothing else uses.)
    CI publishes each variant to GHCR — pull the tag you want:
-   `:xfce` (= `:latest`, xrdp lineage) · `:grd`
+   `:xrdp` (= `:latest`; the xrdp lineage's DE is XFCE) · `:grd`
    (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd image builds + signs, but
    its *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
