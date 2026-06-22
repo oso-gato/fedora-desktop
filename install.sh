@@ -264,7 +264,12 @@ echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | ses
 # effective) is unacceptable there. guacd/libguac + Fedora Tomcat +
 # tomcat-jakartaee-migration are class-(a); only the guacamole.war web client is
 # class-(c) (GPG-verified below); gnupg2 = the gpg CLI for that check.
-WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
+# libguac-client-ssh (class-(a)) adds OPTIONAL clientless browser-SSH tiles to the
+# OTHER fleet hosts (the FLEET_SSH bastion path — see entrypoint.sh + ZTNA-ACCESS.md):
+# from any device (incl. iOS on another VPN) Safari -> :8443 -> guacd -> the
+# SERVER-SIDE tailnet, so no VPN slot is consumed on the client. Inert unless
+# FLEET_SSH is set at runtime.
+WEB_PKGS="guacd libguac-client-rdp libguac-client-ssh tomcat tomcat-jakartaee-migration gnupg2"
 echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 
 # rclone is the cloud-sync engine, now from Fedora's OWN repo (class-a) — the
@@ -393,6 +398,12 @@ printf '%s\n' "$XSESSION" > /etc/fedora-desktop/xsession
 # whole point of a roaming workstation (reconnect over RDP/web and your apps are
 # still open). Mirrored in entrypoint's notes.
 sed -i 's/^#\?KillDisconnected=.*/KillDisconnected=false/' /etc/xrdp/sesman.ini
+# max_bpp=24: cap color depth so even a NATIVE RDP client (mstsc/FreeRDP over the
+# tailnet) negotiating 16/32 bpp is forced to 24. xrdp keys each user's session on
+# <User,BitPerPixel> (sesman Policy=Default), so a depth mismatch forks a SECOND
+# session and breaks the cross-device / multi-user RESUME guarantee. The Guacamole
+# path already pins color-depth=24; this fences the native-RDP path to match.
+sed -i 's/^#\?max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini
 if [ -f /etc/xrdp/gfx.toml ]; then
     sed -i 's/^order *=.*/order = [ "H.264", "RFX" ]/' /etc/xrdp/gfx.toml
     sed -i 's/^h264_encoder *=.*/h264_encoder = "OpenH264"/' /etc/xrdp/gfx.toml || true

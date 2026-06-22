@@ -79,6 +79,13 @@ SecurityLabelDisable=true
 Volume=fedora-desktop-home:/home/core
 Volume=fedora-desktop-state:/var/lib/tailscale
 Volume=fedora-desktop-cert:/var/lib/guac-cert
+# Multi-user (optional): up to 5 additional users. Each needs its OWN persisted home
+# volume bound at its home path — else the user's vault/state/running session lives on
+# the ephemeral layer and is lost on recreation. UNCOMMENT one per provisioned user
+# (n = 1..5; the path must match USERn_NAME):
+#   Volume=fedora-desktop-user1:/home/<USER1_NAME>
+#   …
+#   Volume=fedora-desktop-user5:/home/<USER5_NAME>
 
 # PUBLIC port — the web gateway is the ONLY door to the internet (see run.sh
 # ACCESS MODEL). To change the public host port, edit the LEFT side below (the
@@ -100,6 +107,15 @@ PublishPort=8443:8443
 #   Secret=fedora-desktop-guac-pw,type=env,target=GUAC_PW
 #   Secret=fedora-desktop-rfb-pw,type=env,target=RFB_PW
 #   Secret=fedora-desktop-ts-authkey,type=env,target=TS_AUTHKEY
+# Multi-user (optional) — up to 5 additional desktop users. Each gets their OWN Guacamole
+# web login (USERn_NAME/USERn_PW) → their OWN Desktop + only the fleet tiles their grant
+# (USERn_ACCESS = none|dev|host|both) allows + their own home volume (above). core stays
+# the admin; a user is non-priv (no sudo/podman/claudebox). The entrypoint create-or-updates
+# them idempotently at boot. UNCOMMENT a trio per user (n = 1..5):
+#   Secret=fedora-desktop-user1-name,type=env,target=USER1_NAME
+#   Secret=fedora-desktop-user1-pw,type=env,target=USER1_PW
+#   Secret=fedora-desktop-user1-access,type=env,target=USER1_ACCESS
+#   … (user2 … user5)
 # Or, for an operator-managed (uncommitted) env file:
 #   EnvironmentFile=%h/.config/fedora-desktop/secrets.env
 

@@ -60,15 +60,19 @@ if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
 else
     RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
 fi
+# XML-escape user-supplied values so a strong GUAC_PW/RDP_PW (& < > ") cannot break
+# the generated user-mapping.xml (malformed XML = auth silently fails).
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+GUAC_PW_X="$(xml_escape "${GUAC_PW}")"; RDP_PW_X="$(xml_escape "${RDP_PW}")"
 cat > /etc/guacamole/user-mapping.xml <<EOF
 <user-mapping>
-  <authorize username="core" password="${GUAC_PW}">
+  <authorize username="core" password="${GUAC_PW_X}">
     <connection name="fedora-desktop-grd">
       <protocol>rdp</protocol>
       <param name="hostname">127.0.0.1</param>
       <param name="port">3389</param>
       <param name="username">core</param>
-      <param name="password">${RDP_PW}</param>
+      <param name="password">${RDP_PW_X}</param>
       <param name="security">tls</param>
       <param name="ignore-cert">true</param>
       <param name="resize-method">display-update</param>
