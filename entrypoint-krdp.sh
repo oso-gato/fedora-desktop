@@ -43,37 +43,32 @@ if [ ! -f /var/lib/guac-cert/krdp-cert.pem ]; then
     chown core:core /var/lib/guac-cert/krdp-*.pem; chmod 600 /var/lib/guac-cert/krdp-key.pem
 fi
 
-# ---- Guacamole web user-mapping: core/GUAC_PW -> KRdp's LOOPBACK RDP (TLS) -----
-# Web-door audio OFF by default (low-bandwidth knowledge-work desktop; audio is
-# a continuous push stream). ENABLE_AUDIO=true restores it. Guacamole's RDP
-# lever is `disable-audio` (audio is ON unless set) — `enable-audio` is a no-op.
-if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
-    RDP_AUDIO_PARAM='<!-- audio enabled (libguac-client-rdp default) -->'
-else
-    RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
-fi
-# XML-escape user-supplied values so a strong GUAC_PW/RDP_PW (& < > ") cannot break
-# the generated user-mapping.xml (malformed XML = auth silently fails).
-xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
-GUAC_PW_X="$(xml_escape "${GUAC_PW}")"; RDP_PW_X="$(xml_escape "${RDP_PW}")"
-cat > /etc/guacamole/user-mapping.xml <<EOF
-<user-mapping>
-  <authorize username="core" password="${GUAC_PW_X}">
-    <connection name="fedora-desktop-krdp">
-      <protocol>rdp</protocol>
-      <param name="hostname">127.0.0.1</param>
-      <param name="port">3389</param>
-      <param name="username">core</param>
-      <param name="password">${RDP_PW_X}</param>
-      <param name="security">tls</param>
-      <param name="ignore-cert">true</param>
-      <param name="resize-method">display-update</param>
-      ${RDP_AUDIO_PARAM}
-    </connection>
-  </authorize>
-</user-mapping>
-EOF
-chown tomcat:tomcat /etc/guacamole/user-mapping.xml; chmod 600 /etc/guacamole/user-mapping.xml
+# ---- Guacamole web door: DB-backed auth (MariaDB) + TOTP 2FA -----------------
+# TOTP REQUIRES a database; provisioning uses the SHARED single-source helper
+# bin/guac-db-provision.sh — the four must-dos live there once, byte-identical to the
+# xrdp + grd lineages. krdp specifics: the desktop RDP tile uses security=tls (KRdp's
+# RDP is TLS) and does NOT pin bpp (Wayland). krdp is single-user (core) with no
+# FLEET_SSH / extra users -> the helper provisions just core (web login GUAC_PW ->
+# KRdp's loopback RDP as core/RDP_PW).
+rm -f /etc/guacamole/user-mapping.xml   # must-do #2: a file-auth map would bypass TOTP
+if [ "${ENABLE_AUDIO:-false}" = "true" ]; then RDP_DISABLE_AUDIO=0; else RDP_DISABLE_AUDIO=1; fi
+# MariaDB runs as mariadb.service, ordered before this oneshot (install-krdp.sh). Resolve
+# the client, wait for the socket defensively, then provision (FAIL CLOSED if not ready).
+MCLIENT="$(command -v mariadb || command -v mysql)"
+MADMIN="$(command -v mariadb-admin || command -v mysqladmin)"
+DBSOCK=/var/lib/mysql/mysql.sock   # Fedora's default socket — mariadb.service binds it here
+MYSQL_ROOT() { "$MCLIENT" --socket="$DBSOCK" "$@"; }   # OS-root -> DB-root via unix_socket auth
+_db_ready=0
+for _i in $(seq 1 60); do
+    if "$MADMIN" --socket="$DBSOCK" ping >/dev/null 2>&1; then _db_ready=1; break; fi
+    sleep 1
+done
+[ "$_db_ready" = 1 ] || { echo "FATAL: MariaDB (mariadb.service) not ready for provisioning" >&2; exit 1; }
+RDP_SECURITY=tls
+RDP_PIN_BPP=0
+. /usr/local/share/fedora-dev/bin/guac-db-provision.sh
+guac_db_provision
+unset GUAC_PW
 if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
     keytool -genkeypair -alias guac -keyalg RSA -keysize 2048 -validity 3650 \
         -dname "CN=fedora-desktop-krdp" -storetype PKCS12 \

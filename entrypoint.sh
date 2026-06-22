@@ -14,7 +14,7 @@
 #
 #   DESKTOP (from fedora-xrdp/entrypoint.sh):
 #     * seed core's RDP/system password (chpasswd) from RDP_PW
-#     * Guacamole user-mapping.xml + TLS keystore mint
+#     * MariaDB (loopback) + Guacamole DB-auth/TOTP provisioning + TLS keystore mint
 #     * xrdp-sesman + xrdp (RDP :3389, tailnet-only)
 #     * guacd + Tomcat/Guacamole (web door TLS :8443, the SOLE public desktop port)
 #     * optional RFB_PW x0vncserver same-session mirror (:5900, tailnet-only)
@@ -92,7 +92,7 @@ chmod 700 /home/core
 # Each gets their OWN persisted /home/<user> volume (run.sh) + their OWN Guacamole
 # web login (built below), fenced from the Dev/VPS fleet-bastion tiles. Idempotent:
 # /home persists, so on restart we re-apply password + non-priv posture, never clobber
-# data. A valid+provisioned user keeps USER{i}_NAME set (the user-mapping reads it);
+# data. A valid+provisioned user keeps USER{i}_NAME set (the DB provisioning reads it);
 # an invalid one is unset so it is skipped everywhere.
 for _i in 1 2 3 4 5; do
   eval "_n=\${USER${_i}_NAME:-}; _p=\${USER${_i}_PW:-}"
@@ -106,8 +106,8 @@ for _i in 1 2 3 4 5; do
     eval "unset USER${_i}_NAME USER${_i}_PW"; continue
   fi
   # Normalize this user's FLEET access grant (none|dev|host|both); invalid -> none.
-  # This selects which Dev/VPS bastion tiles the user's web login shows (the user-mapping
-  # reads USER{i}_ACCESS below). Grant = bastion reach (lands as core on the target).
+  # This selects which Dev/VPS bastion tiles the user's web login shows (the DB
+  # provisioning reads USER{i}_ACCESS below). Grant = bastion reach (lands as core on target).
   eval "_a=\${USER${_i}_ACCESS:-none}"; case "$_a" in none|dev|host|both) ;; *) _a=none ;; esac
   eval "USER${_i}_ACCESS=\$_a"
   if ! id -u "$_n" >/dev/null 2>&1; then
@@ -177,131 +177,72 @@ runuser -u core -- bash -c '
 '
 
 # ============================================================================
-# DESKTOP: Guacamole web-gateway config + TLS material
+# DESKTOP: Guacamole web-gateway — DB-backed auth (MariaDB) + TOTP 2FA
 # ============================================================================
-# ---- Guacamole auth + connection --------------------------------------------
-# The web login (user core / GUAC_PW) single-signs-on into the LOCAL RDP session
-# (127.0.0.1:3389, core / RDP_PW). RDP is loopback+tailnet-only; only the web port
-# is public, so the RDP password never crosses the public door in the clear.
+# The public :8443 door authenticates against MariaDB (guacamole-auth-jdbc) with
+# TOTP 2FA (guacamole-auth-totp) layered on, behind the auth-ban IP lockout. TOTP
+# REQUIRES a database (the file user-mapping cannot store the per-user enrollment
+# seed). Each web login SSOs into that identity's own loopback-RDP desktop (core ->
+# RDP_PW; each extra user -> their own password); the RDP password never crosses the
+# public door (RDP is loopback/tailnet-only). Defense-in-depth: a STRONG password
+# (spin-up's diceware floor) AND TOTP — TOTP is phishable and its seed lives in this
+# same DB, so the password stays a load-bearing, independent barrier; it is NOT
+# relaxed just because 2FA is on.
 install -d -m 0750 -o tomcat -g tomcat /etc/guacamole
-# Web-door audio: OFF by default — this is a low-bandwidth knowledge-work desktop and audio
-# is a continuous push stream over the public web hop. ENABLE_AUDIO=true restores it.
-# (Guacamole's RDP audio lever is `disable-audio`; audio is ON unless this is set. The old
-# `enable-audio` param was a no-op — verified against the Guacamole manual.)
-if [ "${ENABLE_AUDIO:-false}" = "true" ]; then
-    RDP_AUDIO_PARAM='<!-- audio enabled (libguac-client-rdp default) -->'
-else
-    RDP_AUDIO_PARAM='<param name="disable-audio">true</param>'
+
+# MUST-DO: the built-in file-auth provider is ALWAYS active when user-mapping.xml
+# exists, and it does NOT enforce TOTP — a surviving file would be a live no-2FA
+# bypass. Remove any stale copy (e.g. left by a previous file-auth image) every boot.
+rm -f /etc/guacamole/user-mapping.xml
+
+# Audio: OFF by default (low-bandwidth desktop; audio is a continuous push stream).
+# Guacamole's lever is `disable-audio` (audio ON unless set); ENABLE_AUDIO=true restores.
+if [ "${ENABLE_AUDIO:-false}" = "true" ]; then RDP_DISABLE_AUDIO=0; else RDP_DISABLE_AUDIO=1; fi
+
+# Resolve MariaDB tool names (Fedora renamed mysql*->mariadb*; keep a mysql* fallback).
+MARIADBD="$(command -v mariadbd || command -v mysqld || echo /usr/sbin/mariadbd)"
+MADMIN="$(command -v mariadb-admin || command -v mysqladmin)"
+MINSTALL="$(command -v mariadb-install-db || command -v mysql_install_db)"
+MCLIENT="$(command -v mariadb || command -v mysql)"
+DBSOCK=/var/lib/mysql/mysql.sock   # Fedora's default socket (datadir-local) — same on all lineages
+MYSQL_ROOT() { "$MCLIENT" --socket="$DBSOCK" "$@"; }   # OS-root -> DB-root via unix_socket auth
+
+# ---- MariaDB: loopback DB engine under the supervised-bash watchdog (no systemd) ---
+# datadir = the /var/lib/mysql persistent volume (control-plane: declared in run.sh /
+# the Quadlet). Bound to 127.0.0.1 ONLY — Principle 7: 3306 is NEVER published. The
+# query log + binlog stay OFF so a password never lands in a log. /run/mariadb is the
+# pid-file dir (created by tmpfiles on the systemd lineages; we make it here for xrdp).
+install -d -m 0755 -o mysql -g mysql /run/mariadb
+chown mysql:mysql /var/lib/mysql 2>/dev/null || true
+chmod 0750 /var/lib/mysql 2>/dev/null || true
+if [ ! -d /var/lib/mysql/mysql ]; then
+    echo "[db] first boot: initializing MariaDB datadir"
+    "$MINSTALL" --user=mysql --datadir=/var/lib/mysql \
+        --auth-root-authentication-method=socket >/var/log/mariadb-install.log 2>&1
 fi
-# Build the web-login -> connections map. The desktop RDP tile is ALWAYS present.
-# FLEET_SSH (optional) adds clientless browser-SSH tiles to the OTHER fleet hosts,
-# turning the one PUBLIC web door into a VPN-slot-free fleet bastion: the user's
-# device needs NO VPN/tailnet — Safari -> :8443 -> guacd -> the desktop's
-# SERVER-SIDE tailnet reaches dev/host. (Rationale: no client-VPN ZTNA, Twingate
-# included, escapes iOS's single-VPN-slot rule; a clientless web door is the only
-# path that does — see ZTNA-ACCESS.md.)
-#   FLEET_SSH format: ';'-separated entries, each "label host [port] [user]", e.g.
-#     FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core'
-#   Auth: prefer KEYLESS Tailscale-SSH (the desktop's tailnet identity authorizes
-#   the hop; the target must allow it in the tailnet SSH ACL -> no secret here).
-#   Fallback: a runtime private key bind-mounted to /etc/fedora-desktop/fleet_ssh_key
-#   (Principle 5 — NEVER baked into a layer); applied to every SSH tile when present.
-# XML-escape user-supplied values (& < > ") so a strong GUAC_PW/RDP_PW or a fleet
-# host label cannot break the generated user-mapping.xml (malformed XML = auth
-# silently fails). `&` first, or the others would double-escape.
-xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
-GUAC_PW_X="$(xml_escape "${GUAC_PW}")"
-RDP_PW_X="$(xml_escape "${RDP_PW}")"
-ssh_keyparam=""
-[ -r /etc/fedora-desktop/fleet_ssh_key ] && \
-    ssh_keyparam="<param name=\"private-key\">$(cat /etc/fedora-desktop/fleet_ssh_key)</param>"
-# emit_fleet_tiles <access> — print the FLEET_SSH browser-SSH tiles this identity is
-# granted. access: all (core) | both | dev | host | none. Maps a grant to FLEET_SSH
-# entries BY LABEL (dev -> a *dev* label; host -> a *vps*/*host* label); core gets all.
-emit_fleet_tiles() {
-  _acc="$1"; [ "$_acc" = none ] && return 0; [ -n "${FLEET_SSH:-}" ] || return 0
-  printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
-    [ -n "$f_label" ] && [ -n "$f_host" ] || continue
-    case "$_acc" in
-      all) : ;;
-      both) case "$f_label" in *dev*|*vps*|*host*) : ;; *) continue ;; esac ;;
-      dev)  case "$f_label" in *dev*) : ;; *) continue ;; esac ;;
-      host) case "$f_label" in *vps*|*host*) : ;; *) continue ;; esac ;;
-      *) continue ;;
-    esac
-    f_port="${f_port:-22}"; case "$f_port" in (*[!0-9]*|'') f_port=22 ;; esac
-    cat <<SSHCONN
-    <connection name="ssh-$(xml_escape "$f_label")">
-      <protocol>ssh</protocol>
-      <param name="hostname">$(xml_escape "$f_host")</param>
-      <param name="port">${f_port}</param>
-      <param name="username">$(xml_escape "${f_user:-core}")</param>
-      ${ssh_keyparam}
-    </connection>
-SSHCONN
-  done
-}
-{
-  printf '<user-mapping>\n'
-  printf '  <authorize username="core" password="%s">\n' "${GUAC_PW_X}"
-  cat <<RDPCONN
-    <connection name="fedora-desktop">
-      <protocol>rdp</protocol>
-      <param name="hostname">127.0.0.1</param>
-      <param name="port">3389</param>
-      <param name="username">core</param>
-      <param name="password">${RDP_PW_X}</param>
-      <param name="ignore-cert">true</param>
-      <param name="security">any</param>
-      <param name="resize-method">display-update</param>
-      <!-- color-depth pinned to 24 to MATCH the boot bootstrap (xrdp-sesrun -b 24):
-           xrdp's session policy keys on bpp, so a depth mismatch forks a SECOND
-           session and the pre-warm becomes a no-op. Pinning both to 24 makes guacd
-           reuse the pre-warmed :10 session, so the web door is live before login. -->
-      <param name="color-depth">24</param>
-      ${RDP_AUDIO_PARAM}
-    </connection>
-RDPCONN
-  emit_fleet_tiles all   # core (admin) always sees every fleet tile (Dev + VPS)
-  printf '  </authorize>\n'
-  # ---- per-USER authorize blocks (multi-user, up to 5 extra users) -------------
-  # Each provisioned user gets their OWN Guacamole web login (their username +
-  # password) that SSOs into their own loopback-RDP desktop session, PLUS the Dev/VPS
-  # fleet tiles their spin-up grant allows (USER{i}_ACCESS = none|dev|host|both;
-  # default none = Desktop only). core's block (above) always gets ALL tiles.
-  # color-depth=24 == core's: xrdp keys sessions on <User,BitPerPixel>, so 24 here is
-  # what lets each user's session RESUME across devices. Passwords come from secrets.env
-  # and land only in this runtime 0600 file — never an image layer.
-  for _w in 1 2 3 4 5; do
-    eval "_wn=\${USER${_w}_NAME:-}; _wp=\${USER${_w}_PW:-}; _wa=\${USER${_w}_ACCESS:-none}"
-    [ -n "$_wn" ] && [ -n "$_wp" ] || continue
-    _wn_x="$(xml_escape "$_wn")"; _wp_x="$(xml_escape "$_wp")"
-    printf '  <authorize username="%s" password="%s">\n' "$_wn_x" "$_wp_x"
-    cat <<WUSER
-    <connection name="desktop-${_wn_x}">
-      <protocol>rdp</protocol>
-      <param name="hostname">127.0.0.1</param>
-      <param name="port">3389</param>
-      <param name="username">${_wn_x}</param>
-      <param name="password">${_wp_x}</param>
-      <param name="ignore-cert">true</param>
-      <param name="security">any</param>
-      <param name="resize-method">display-update</param>
-      <param name="color-depth">24</param>
-      ${RDP_AUDIO_PARAM}
-    </connection>
-WUSER
-    emit_fleet_tiles "$_wa"
-    printf '  </authorize>\n'
-  done
-  printf '</user-mapping>\n'
-} > /etc/guacamole/user-mapping.xml
-chown tomcat:tomcat /etc/guacamole/user-mapping.xml
-chmod 600 /etc/guacamole/user-mapping.xml
-# guacamole.properties (guacd loopback) is written at build; auth-ban extension is
-# baked at build into /etc/guacamole/extensions/ (brute-force lockout on :8443).
-[ -f /etc/guacamole/guacamole.properties ] || \
-    printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\nban-max-invalid-attempts: 3\nban-address-duration: 900\n' > /etc/guacamole/guacamole.properties
+runuser -u mysql -- "$MARIADBD" \
+    --datadir=/var/lib/mysql --socket="$DBSOCK" \
+    --bind-address=127.0.0.1 --port=3306 --skip-name-resolve --general-log=0 --skip-log-bin \
+    >/var/log/mariadbd.log 2>&1 &
+# wait for readiness; FAIL CLOSED if the engine never answers.
+_db_ready=0
+for _i in $(seq 1 60); do
+    if "$MADMIN" --socket="$DBSOCK" ping >/dev/null 2>&1; then _db_ready=1; break; fi
+    sleep 1
+done
+[ "$_db_ready" = 1 ] || { echo "FATAL: MariaDB did not become ready" >&2; exit 1; }
+echo "[db] MariaDB up on 127.0.0.1:3306 (loopback only)"
+
+# ---- provision Guacamole DB-auth + TOTP via the shared single-source helper -------
+# bin/guac-db-provision.sh (COPY'd to /usr/local/share/fedora-dev/bin/) is the ONE
+# place the four TOTP/DB must-dos live, byte-identical across all three lineages
+# (xrdp here; grd/krdp source the same file). xrdp specifics: RDP security 'any' + pin
+# 24bpp (the cross-device session-RESUME invariant). MYSQL_ROOT + DBSOCK were defined
+# during the MariaDB bring-up above; the helper generates the loopback DB_PW itself.
+RDP_SECURITY=any
+RDP_PIN_BPP=1
+. /usr/local/share/fedora-dev/bin/guac-db-provision.sh
+guac_db_provision
 unset GUAC_PW
 # ---- TLS keystore (PKCS12) for Tomcat's :8443 connector ---------------------
 if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
@@ -404,9 +345,13 @@ xrdp_pid=$!
   done ) &
 
 # ---- the WEB door on TLS :8443 — Apache Guacamole ---------------------------
-# guacd (loopback RDP client) + Tomcat serving the .war + the auth-ban extension.
-# Fedora's Tomcat needs NAME=tomcat + CATALINA_BASE; JAVA_OPTS points Guacamole at
-# /etc/guacamole (guacamole.properties + user-mapping.xml + extensions/auth-ban).
+# guacd (loopback RDP client) + Tomcat serving the .war + the jdbc/totp/auth-ban
+# extensions. Fedora's Tomcat needs NAME=tomcat + CATALINA_BASE; JAVA_OPTS points
+# Guacamole at /etc/guacamole (guacamole.properties + lib/ JDBC driver + extensions/).
+# DB-readiness gate: never start the web door if MariaDB isn't answering (Guacamole
+# would fail every login into a hard lockout). The watchdog covers steady-state.
+"$MADMIN" --socket="$DBSOCK" ping >/dev/null 2>&1 \
+    || { echo "FATAL: MariaDB not ready at web-door start" >&2; exit 1; }
 /usr/sbin/guacd -b 127.0.0.1
 # guacd daemonizes; track it by name in the watchdog (no usable PID from -b).
 export NAME=tomcat CATALINA_BASE=/usr/share/tomcat
@@ -438,7 +383,7 @@ if [ -n "${RFB_PW:-}" ]; then
     x0vnc_pid=$!
     echo "VNC head armed: :5900 (tailnet-only native-VNC mirror of the :10 RDP session)"
 fi
-# RDP_PW is fully consumed now (chpasswd + any guacamole user-mapping). Drop it.
+# RDP_PW is fully consumed now (chpasswd + the DB RDP-connection params). Drop it.
 unset RDP_PW
 
 # ============================================================================
@@ -630,7 +575,8 @@ while sleep 30; do
     # Desktop — always: the RDP session owner
     pgrep -x xrdp               >/dev/null 2>&1 || { echo "xrdp died";             exit 1; }
     pgrep -x xrdp-sesman        >/dev/null 2>&1 || { echo "xrdp-sesman died";      exit 1; }
-    # Desktop — the Guacamole web door (guacd + Tomcat serving the .war)
+    # Desktop — the Guacamole web door (MariaDB + guacd + Tomcat serving the .war)
+    pgrep -x mariadbd       >/dev/null 2>&1 || { echo "mariadbd died";         exit 1; }
     pgrep -x guacd          >/dev/null 2>&1 || { echo "guacd died";            exit 1; }
     pgrep -f catalina       >/dev/null 2>&1 || { echo "tomcat/catalina died";  exit 1; }
     # the optional tailnet VNC mirror (x0vncserver respawn loop). Only tracked

@@ -272,11 +272,26 @@ echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | ses
 WEB_PKGS="guacd libguac-client-rdp libguac-client-ssh tomcat tomcat-jakartaee-migration gnupg2"
 echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 
+# DB-backed auth: TOTP 2FA (Google Authenticator) REQUIRES a database — the file
+# user-mapping cannot store the per-user TOTP enrollment seed. So the public door
+# moves from file-auth to MariaDB-backed auth (guacamole-auth-jdbc) + the TOTP
+# extension (guacamole-auth-totp), keeping auth-ban on top. MariaDB + the JDBC driver
+# are Fedora class-(a) LEAF packages (verified `dnf repoquery --requires`: mariadb-server
+# hard-Requires only mariadb/mariadb-common/mariadb-errmsg/coreutils/iproute/which + the
+# systemd shared-lib — the SAME RPM-level systemd dep sshd/fail2ban carry in PART A, NOT
+# a systemd-as-PID-1 requirement; mariadbd runs under the supervised-bash watchdog like
+# every other daemon here. mysql-selinux is a conditional dep on selinux-policy-targeted,
+# which this SELinux-disabled container does not run). The two Guacamole extensions are
+# class-(c) (GPG-verified below, same pinned Apache key as the .war/auth-ban).
+DB_PKGS="mariadb-server mariadb mariadb-java-client"
+echo ">>> fedora-desktop DB-backed auth: MariaDB + Guacamole jdbc/totp | pkgs='$DB_PKGS'"
+
 # rclone is the cloud-sync engine, now from Fedora's OWN repo (class-a) — the
 # unsigned developer rpm was dropped per the zero-base check (Fedora packages it).
 $DNF install \
     xrdp xorgxrdp openh264 \
     ${WEB_PKGS} \
+    ${DB_PKGS} \
     ${DE_PKGS} \
     rclone \
     dbus-x11 xorg-x11-xauth xdpyinfo xterm \
@@ -384,6 +399,76 @@ install -m 0640 -o tomcat -g tomcat \
 rm -rf /tmp/guac-ban.tgz /tmp/guac-ban.tgz.asc /tmp/guac-KEYS "/tmp/guacamole-auth-ban-${GUAC_VERSION}"
 # auth-ban is TIGHTENED above (3 attempts / 15-min ban, vs the 5/5-min default) in
 # guacamole.properties — the brute-force backstop behind spin-up.sh's passphrase floor.
+
+# ---- DB-backed auth: guacamole-auth-jdbc (MySQL) + guacamole-auth-totp -------
+# TOTP 2FA stores a per-user enrollment seed, which the file user-mapping cannot
+# hold — so the public door is DB-backed (MariaDB) with the TOTP extension layered
+# on. BOTH extensions are class-(c) Apache Guacamole artifacts from the SAME pinned-key
+# channel as the .war/auth-ban: fetched over TLS from Apache's own host, GPG-verified
+# against GUAC_GPG_FP, FAIL-CLOSED. The identical fetch+verify+extract pattern as the
+# .war/auth-ban, factored here into one helper (jdbc + totp both use it).
+guac_verify_tarball() {  # <basename.tar.gz> <out.tgz> — fetch + GPG-verify (fail-closed) + extract to /tmp
+    _bn="$1"; _out="$2"
+    curl -fsSL -o "$_out"        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/${_bn}"
+    curl -fsSL -o "${_out}.asc"  "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/${_bn}.asc"
+    curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+    GNUPGHOME="$(mktemp -d)"; export GNUPGHOME; gpg --quiet --import /tmp/guac-KEYS
+    gpg --status-fd 1 --verify "${_out}.asc" "$_out" 2>/dev/null \
+        | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+        || { echo "FATAL: ${_bn} GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+    echo "${_bn}: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+    rm -rf "$GNUPGHOME"; unset GNUPGHOME
+    tar -xzf "$_out" -C /tmp
+    rm -f "$_out" "${_out}.asc" /tmp/guac-KEYS
+}
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole/extensions /etc/guacamole/lib
+
+# guacamole-auth-jdbc: install ONLY the MySQL extension jar, and STASH the 001 schema
+# for the entrypoint to load at first boot. We DELIBERATELY do NOT ship (and the
+# entrypoint never loads) 002-create-admin-user.sql — it creates the guacadmin/guacadmin
+# default admin, a public backdoor. (The entrypoint ALSO deletes any guacadmin entity
+# and fails closed if one survives — belt-and-suspenders.)
+guac_verify_tarball "guacamole-auth-jdbc-${GUAC_VERSION}.tar.gz" /tmp/guac-jdbc.tgz
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}/mysql/guacamole-auth-jdbc-mysql-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-jdbc-mysql-${GUAC_VERSION}.jar"
+install -d -m 0755 /usr/local/share/guacamole-schema
+install -m 0644 \
+    "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}/mysql/schema/001-create-schema.sql" \
+    /usr/local/share/guacamole-schema/001-create-schema.sql
+rm -rf "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}"
+echo "guacamole-auth-jdbc-mysql: extension installed; 001 schema stashed (002 admin-user intentionally OMITTED)"
+
+# guacamole-auth-totp: the 2FA extension (TOTP / Google Authenticator). On first login
+# Guacamole shows the seed as a QR; the per-user secret is stored base32 in the DB
+# (guacamole_user_attribute, attribute_name guac-totp-key-*). No pre-provisioning.
+guac_verify_tarball "guacamole-auth-totp-${GUAC_VERSION}.tar.gz" /tmp/guac-totp.tgz
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-totp-${GUAC_VERSION}/guacamole-auth-totp-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-totp-${GUAC_VERSION}.jar"
+rm -rf "/tmp/guacamole-auth-totp-${GUAC_VERSION}"
+echo "guacamole-auth-totp: 2FA extension installed"
+
+# JDBC driver: Guacamole loads JDBC drivers from $GUACAMOLE_HOME/lib (=/etc/guacamole/lib).
+# mariadb-java-client (class-(a)) installs its jar at the rpm-owned /usr/lib/java path;
+# `install` fails the build (fail-closed) if that path is absent.
+install -m 0640 -o tomcat -g tomcat \
+    /usr/lib/java/mariadb-java-client.jar \
+    /etc/guacamole/lib/mariadb-java-client.jar
+echo "mariadb JDBC driver staged into /etc/guacamole/lib"
+
+# MariaDB daemon config. Named zz- so it sorts AFTER Fedora's mariadb-server.cnf and
+# wins: loopback ONLY (Principle 7 — 3306 is NEVER published); name resolution +
+# query-log + binlog OFF (no password in any log — Principle 5). Socket stays the
+# Fedora default /var/lib/mysql/mysql.sock. (The xrdp entrypoint also passes these as
+# explicit mariadbd flags; this file gives the same defaults to any implicit client.)
+cat > /etc/my.cnf.d/zz-fedora-desktop.cnf <<'CNF'
+[mysqld]
+bind-address=127.0.0.1
+skip-name-resolve
+general-log=0
+skip-log-bin
+CNF
 
 # ---- xrdp: XFCE session, session persistence, GFX H.264-first ---------------
 # Bake the variant's X session-start so the entrypoint's first-boot fallback (on a

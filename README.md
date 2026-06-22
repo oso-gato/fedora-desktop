@@ -152,6 +152,9 @@ cloud is rclone-only.
 | Obsidian | apps | c | the vault editor — primary knowledge-work interface. Developer AppImage, latest-at-build, sha256 logged → `/opt/obsidian` + a `.desktop` (no rpm exists) |
 | guacamole.war | remote-access | c | the Guacamole webapp on :8443. Official Apache `.war` pinned by `GUAC_VERSION`, GPG-verified against the pinned Apache key (`GUAC_GPG_FP`), converted javax→jakarta with Apache's `jakartaee-migration` (Fedora ships only Tomcat 10.1). No rpm exists |
 | guacamole-auth-ban | remote-access | c | brute-force lockout on the PUBLIC :8443 door — a second Apache Guacamole `.jar` extension (same `GUAC_VERSION`, same pinned key `GUAC_GPG_FP`, same fetch+GPG-verify+extract pattern) dropped into `/etc/guacamole/extensions/`. What makes a single strong `GUAC_PW` a defensible public door (a password with no lockout is brute-forceable). No rpm exists |
+| guacamole-auth-jdbc | remote-access | c | the MySQL JDBC auth backend — moves the public door to MariaDB so TOTP 2FA can store enrollment seeds. Third Apache `.jar` extension (same key/pattern). Only the `mysql/` jar is installed + only `001-create-schema.sql` is stashed; the `002` guacadmin backdoor is never shipped/loaded. No rpm exists |
+| guacamole-auth-totp | remote-access | c | TOTP / Google-Authenticator 2FA on the public door (QR at first login, seed in the DB). Fourth Apache `.jar` extension (same key/pattern). No rpm exists |
+| mariadb-server / mariadb / mariadb-java-client | remote-access | a | the DB the public door authenticates against (TOTP needs a DB), its client, and the JDBC driver Guacamole loads from `/etc/guacamole/lib`. Fedora **leaf** packages; the DB binds **127.0.0.1 only** (3306 never published) and runs under the supervised-bash watchdog (xrdp) or as `mariadb.service` (grd/krdp) |
 | jakartaee-migration | (build tool) | c | Apache's own converter (pinned `JEEMIG_VERSION`) used at build time to make `guacamole.war` Tomcat-10-compatible; not installed into the image |
 
 ### Box packages
@@ -188,7 +191,10 @@ with them via `run.sh` / the Quadlet:
    IP ban**:
    - **`RDP_PW`** — **strong** (`core`'s system/RDP password; the RDP door + the web SSO).
    - **`GUAC_PW`** — **strong** (the public web login; the Guacamole gateway is the only public
-     door, hardened by the `guacamole-auth-ban` brute-force lockout).
+     door, hardened by the `guacamole-auth-ban` brute-force lockout **and TOTP 2FA**). Note: 2FA is
+     **additive** — keep the password strong anyway. TOTP is phishable (a real-time relay captures
+     password + live code together) and its seed lives in the same DB, so the password remains an
+     independent barrier; 2FA does NOT license a weak password.
    - `RFB_PW` (optional) — arms the **tailnet-only** `:5900` native-VNC mirror (not a gateway choice).
 4. **Additional users (optional)** — how many ADDITIONAL desktop users beyond `core` (**0 to 5**)?
    `core` is always the admin (full dev). For each extra user ask: a **username** (lowercase
@@ -221,7 +227,7 @@ the in-container `nft` guard — tailnet-only by *construction*, so a future `-p
 | Var | Required | What it is |
 |---|---|---|
 | `RDP_PW` | **yes** | `core`'s system/RDP password. The entrypoint `chpasswd`'s it and Guacamole single-signs-on into the local RDP session with it |
-| `GUAC_PW` | **yes** | the public Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`). Use a STRONG one — the `guacamole-auth-ban` extension adds brute-force lockout on this, the only public door |
+| `GUAC_PW` | **yes** | the public Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`). Use a STRONG one — `guacamole-auth-ban` adds brute-force lockout AND **TOTP 2FA** is enforced (enroll a QR at first login). 2FA is additive defense-in-depth, NOT a license for a weak password (TOTP is phishable + its seed is in the same DB) |
 | `RFB_PW` | no | **OPTIONAL** — arms the same-session native-VNC mirror on :5900 (tailnet-only; VncAuth — only first 8 chars effective). Not a gateway choice |
 | `TS_AUTHKEY` | no | unattended tailnet join (else the join is interactive — open the printed login URL once) |
 | `USER{1..5}_NAME` / `_PW` / `_ACCESS` | no | **OPTIONAL** — up to **5** additional desktop users (each: username + strong password + fleet-access `none`/`dev`/`host`/`both`). `core` stays admin; each user gets their OWN web login → their OWN desktop session + only the fleet tiles their grant allows + their OWN persisted `/home` volume (`fedora-desktop-userN`). A `dev`/`host` grant = bastion reach **as `core`** on that box. `./spin-up.sh` prompts for these. See CLAUDE.md MULTI-USER |
@@ -273,11 +279,18 @@ compares before restart, enabling its auto-rollback). `Notify=healthy`, `AutoUpd
 ### First boot
 
 Takes ~2-5 minutes. The entrypoint seeds `core`'s password from `RDP_PW`, syncs ssh keys from
-`github.com/oso-gato.keys`, mints the Guacamole TLS keystore, starts rsyslog + sshd + fail2ban
-+ tailscaled + xrdp + guacd + Tomcat, then eagerly assembles the claudebox in the background
-(dnf-installs claude-code + tools inside the box). The first `claude` invocation tails the
-assemble log if it's still in progress. If `TS_AUTHKEY` is unset the tailnet join is
-interactive — `podman logs -f fedora-desktop` for the one-time login URL.
+`github.com/oso-gato.keys`, mints the Guacamole TLS keystore, brings up the loopback MariaDB
+engine + provisions DB-backed web auth (each web login + its desktop/fleet tiles), starts
+rsyslog + sshd + fail2ban + tailscaled + xrdp + mariadbd + guacd + Tomcat, then eagerly
+assembles the claudebox in the background (dnf-installs claude-code + tools inside the box). The
+first `claude` invocation tails the assemble log if it's still in progress. If `TS_AUTHKEY` is
+unset the tailnet join is interactive — `podman logs -f fedora-desktop` for the one-time login URL.
+
+**2FA enrollment (first web login).** The first time you sign in at `https://<host>:8443/guacamole/`
+with `core` / `GUAC_PW`, Guacamole shows a **TOTP QR code**: scan it into Google Authenticator
+(or any TOTP app) and save it. From then on every login asks for `GUAC_PW` **plus** the 6-digit
+code. One seed works on as many devices as you scan it into (portable — that's why TOTP over a
+per-device client cert). Each additional user enrolls their own seed on their first login.
 
 ## Operate
 
@@ -363,6 +376,13 @@ non-zero on any death (the outer `--restart=always` heals).
 - **Whole-container recovery/refresh/rollback is HOST-side** (the bootstrap host owns
   pull/recreate/rollback via the workload-refresh harness) — don't hand-roll `podman
   stop/rm/run` against the running box.
+- **TOTP break-glass (lost authenticator)** — clear a user's enrollment so their NEXT login
+  re-shows the QR. Host-side: `podman exec -u 0 fedora-desktop mariadb --socket=/run/mysqld/mysqld.sock guacamole_db -e "DELETE FROM guacamole_user_attribute WHERE attribute_name LIKE 'guac-totp-key-%' AND user_id=(SELECT user_id FROM guacamole_user JOIN guacamole_entity USING(entity_id) WHERE name='core');"`
+  Keep a recovery admin enrolled on a separate device so you are never locked out of the only door.
+- **The DB is stateful — BACK IT UP.** All web logins **and TOTP seeds** live in the
+  `/var/lib/mysql` volume (`fedora-desktop-db`). **Losing that volume = losing every enrollment**
+  (everyone re-enrolls at next login). Snapshot with `podman exec -u 0 fedora-desktop sh -c 'mariadb-dump --socket=/run/mysqld/mysqld.sock guacamole_db' > guacamole_db.sql`.
+  A dead/corrupt DB surfaces as **unhealthy** (it's in the watchdog) rather than a silent total lockout.
 
 ## Notes
 
