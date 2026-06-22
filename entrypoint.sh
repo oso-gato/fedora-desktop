@@ -390,8 +390,16 @@ unset RDP_PW
 # BOX supervisor: live-spec bootstrap + claudebox machinery (from fedora-dev)
 # ============================================================================
 
-# State dir for box lifecycle (session lock, rebuild flag, pending marker, logs)
-install -d -m 0755 -o core -g core /home/core/.local/state/claudebox
+# State + spec dirs for the box, CORE-owned. List EACH level explicitly: `install -d`
+# leaves an intermediate parent it has to create (here /home/core/.local) owned by the
+# CALLER (root), not by -o core — and the live-spec seed below runs as `core` and writes
+# /home/core/.local/share. A root-owned .local makes that `mkdir` "Permission denied",
+# which (via the outer set -e on the runuser call) killed PID 1 and took the whole
+# DESKTOP down on a fresh home volume. Creating .local + .local/share core-owned up front
+# fixes it. (chmod 700 /home/core earlier still lets core, the owner, traverse/create here.)
+install -d -m 0755 -o core -g core \
+    /home/core/.local /home/core/.local/share \
+    /home/core/.local/state /home/core/.local/state/claudebox
 
 # ---- live-spec bootstrap (first boot only) ---------------------------------
 # Clone the fedora-desktop repo to /home/core/.local/share/fedora-dev/ — the
@@ -405,7 +413,7 @@ install -d -m 0755 -o core -g core /home/core/.local/state/claudebox
 # WITHOUT git-init (a seeded-no-git state). The box rebuild, daily tick, and
 # inotify watcher all keep working (they read files, not git); propose-and-commit
 # is blocked until converted — see CONVERT-TO-GIT.md dropped alongside.
-runuser -u core -- bash <<'BOOTSTRAP'
+runuser -u core -- bash <<'BOOTSTRAP' || echo "[live-spec] bootstrap returned nonzero — NON-FATAL for the desktop (the web door stays up). The claudebox/live-spec is unavailable until repaired (see errors above). On fedora-desktop the DESKTOP is primary; a dev-box seed/clone failure must NOT crash it."
 set -u
 live=/home/core/.local/share/fedora-dev
 seed=/usr/local/share/fedora-dev
