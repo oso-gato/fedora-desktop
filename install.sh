@@ -352,7 +352,9 @@ rm -rf "$GNUPGHOME"; unset GNUPGHOME
 javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
 rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
 install -d -m 0750 -o tomcat -g tomcat /etc/guacamole
-printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
+# guacd loopback + TIGHTENED auth-ban (3 failed attempts -> 15-min IP ban, stricter than
+# the 5/5-min default): the brute-force backstop behind spin-up.sh's strong-passphrase floor.
+printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\nban-max-invalid-attempts: 3\nban-address-duration: 900\n' > /etc/guacamole/guacamole.properties
 # TLS connector :8443 for the web door (PKCS12 keystore minted at runtime; entrypoint).
 sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
 
@@ -380,8 +382,8 @@ install -m 0640 -o tomcat -g tomcat \
     "/tmp/guacamole-auth-ban-${GUAC_VERSION}/guacamole-auth-ban-${GUAC_VERSION}.jar" \
     "/etc/guacamole/extensions/guacamole-auth-ban-${GUAC_VERSION}.jar"
 rm -rf /tmp/guac-ban.tgz /tmp/guac-ban.tgz.asc /tmp/guac-KEYS "/tmp/guacamole-auth-ban-${GUAC_VERSION}"
-# auth-ban defaults (5 failed attempts / 5 min -> 5-min ban) are sane; tunable via
-# ban-max-invalid-attempts / ban-address-duration etc. in guacamole.properties.
+# auth-ban is TIGHTENED above (3 attempts / 15-min ban, vs the 5/5-min default) in
+# guacamole.properties — the brute-force backstop behind spin-up.sh's passphrase floor.
 
 # ---- xrdp: XFCE session, session persistence, GFX H.264-first ---------------
 # Bake the variant's X session-start so the entrypoint's first-boot fallback (on a

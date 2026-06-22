@@ -301,7 +301,7 @@ chmod 600 /etc/guacamole/user-mapping.xml
 # guacamole.properties (guacd loopback) is written at build; auth-ban extension is
 # baked at build into /etc/guacamole/extensions/ (brute-force lockout on :8443).
 [ -f /etc/guacamole/guacamole.properties ] || \
-    printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
+    printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\nban-max-invalid-attempts: 3\nban-address-duration: 900\n' > /etc/guacamole/guacamole.properties
 unset GUAC_PW
 # ---- TLS keystore (PKCS12) for Tomcat's :8443 connector ---------------------
 if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then

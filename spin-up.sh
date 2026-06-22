@@ -20,15 +20,37 @@ ask() {  # ask "<prompt>" ["<default>"]
   read -r -p "$p${d:+ [$d]}: " v </dev/tty
   printf '%s' "${v:-$d}"
 }
-ask_secret() {  # ask_secret "<prompt>" — hidden input, confirmed
-  local p="$1" a b
+ask_secret() {  # ask_secret "<prompt>" [min-length] — hidden, length-floored, confirmed
+  local p="$1" min="${2:-0}" a b
   while :; do
     read -rs -p "$p: " a </dev/tty; echo >&2
-    read -rs -p "$p (confirm): " b </dev/tty; echo >&2
     [ -n "$a" ] || { echo "  (empty — try again)" >&2; continue; }
+    if [ "${#a}" -lt "$min" ]; then echo "  too short — need >= $min chars (or choose Generate)" >&2; continue; fi
+    read -rs -p "$p (confirm): " b </dev/tty; echo >&2
     [ "$a" = "$b" ] && { printf '%s' "$a"; return 0; }
     echo "  passwords differ — try again" >&2
   done
+}
+# Diceware passphrase generator (the "crypto-wallet seed phrase" model): N random words
+# from the bundled EFF wordlist -> high entropy (6 words ~ 77 bits) yet typable on mobile.
+# Falls back to a high-entropy random string if the wordlist is somehow absent.
+WORDLIST="$(dirname "$0")/passphrase-wordlist.txt"
+gen_passphrase() {  # gen_passphrase [nwords]
+  local n="${1:-6}"
+  if [ -r "$WORDLIST" ]; then shuf -n "$n" "$WORDLIST" | paste -sd'-' -
+  else openssl rand -base64 24 2>/dev/null | tr -d '/+=' | cut -c1-28; fi
+}
+PASS_MIN=20
+choose_password() {  # choose_password "<label>" — generate (recommended) or type-your-own (>= PASS_MIN)
+  local label="$1" mode pw
+  mode="$(ask "  $label — [G]enerate a strong passphrase, or type your [o]wn?" G)"
+  case "$mode" in
+    o|own|O|OWN) ask_secret "  $label (min ${PASS_MIN} chars)" "$PASS_MIN" ;;
+    *) pw="$(gen_passphrase 6)"
+       { echo "  >> GENERATED $label:  $pw"
+         echo "     SAVE THIS NOW (like a wallet seed phrase) — it is not stored or shown again."; } >&2
+       printf '%s' "$pw" ;;
+  esac
 }
 valid_user() {  # 0 if a legal, non-reserved username
   printf '%s' "$1" | grep -Eq '^[a-z_][a-z0-9_-]{0,30}$' || return 1
@@ -37,8 +59,8 @@ valid_user() {  # 0 if a legal, non-reserved username
 }
 
 echo "=== fedora-desktop spin-up ===" >&2
-RDP_PW="$(ask_secret "core's RDP/system password (STRONG)")"
-GUAC_PW="$(ask_secret "core's Guacamole WEB password (STRONG; the only public door)")"
+RDP_PW="$(choose_password "core's RDP/system password")"
+GUAC_PW="$(choose_password "core's Guacamole WEB password (the only public door)")"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
 
 # core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the
@@ -65,7 +87,7 @@ while [ "$i" -lt "$N" ]; do
     break
   done
   seen="$seen$u "
-  p="$(ask_secret "  password for '$u'")"
+  p="$(choose_password "password for '$u'")"
   a=""
   while :; do
     a="$(ask "  Show the Dev/VPS fleet SSH tiles for '$u'? (none|dev|host|both)" none)"

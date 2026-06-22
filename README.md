@@ -178,7 +178,10 @@ with them via `run.sh` / the Quadlet:
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
    web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
    non-tailnet door demands strong auth and noVNC's 8-char VncAuth is unacceptable there).
-3. **Secrets, per door:**
+3. **Secrets, per door** — `./spin-up.sh` offers to **generate a diceware passphrase** (6 EFF words
+   ≈ 77 bits, wallet-seed style, shown once to save) for each, or accepts your own with a **≥20-char
+   floor**. The public door is further backed by `guacamole-auth-ban` tightened to **3 attempts → 15-min
+   IP ban**:
    - **`RDP_PW`** — **strong** (`core`'s system/RDP password; the RDP door + the web SSO).
    - **`GUAC_PW`** — **strong** (the public web login; the Guacamole gateway is the only public
      door, hardened by the `guacamole-auth-ban` brute-force lockout).
