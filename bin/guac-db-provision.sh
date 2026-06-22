@@ -200,6 +200,17 @@ SQL
 
     # guacamole.properties: guacd + auth-ban + JDBC/TOTP wiring. The DB password is a
     # RUNTIME secret (Principle 5), so the full properties are written HERE, not baked.
+    #
+    # JDBC SCHEME FIX: Guacamole's mysql auth extension builds a `jdbc:mysql://` URL, but our
+    # Fedora class-(a) driver is MariaDB Connector/J 3.x (mariadb-java-client 3.5.x), which
+    # REFUSES the `jdbc:mysql://` scheme by default -> DriverManager throws
+    # "No suitable driver found for jdbc:mysql://127.0.0.1:3306/guacamole_db" on EVERY web
+    # login -> the UI shows "An error has occurred". `mysql-driver: mariadb` selects the
+    # MariaDB driver class but does NOT change the scheme, so it is not sufficient alone.
+    # MariaDB Connector/J re-accepts the mysql scheme when `permitMysqlScheme` is in the URL;
+    # Guacamole's only URL-injection point is the database segment, so we append it there.
+    # (Keeps the Fedora-sourced driver per Build Principle 2 — Maven Central / mysql-connector-j
+    # is forbidden.)
     cat > /etc/guacamole/guacamole.properties <<PROPS
 guacd-hostname: 127.0.0.1
 guacd-port: 4822
@@ -207,7 +218,7 @@ ban-max-invalid-attempts: 3
 ban-address-duration: 900
 mysql-hostname: 127.0.0.1
 mysql-port: 3306
-mysql-database: guacamole_db
+mysql-database: guacamole_db?permitMysqlScheme=true
 mysql-username: guacamole
 mysql-password: ${DB_PW}
 mysql-driver: mariadb
