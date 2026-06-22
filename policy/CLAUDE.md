@@ -51,7 +51,11 @@ machinery. Because PUSH SCOPE already removes the box's ability to push other re
 gate's whole job is: the box's OWN-repo `main` push (self-deploy promotion) and any control-
 plane/guardrail change. On those, the agent prepares the change, presents a discrete clickable
 decision (selectable options + free-text "Other" + "open a chat about it"), and ONLY on Arthur's
-explicit approval performs the push.
+explicit approval **the agent itself performs the push/merge** — never a direct push, never a
+hand-off to a human. **This is the SINGLE canonical statement of the merge rule for this box; the
+PUSH SCOPE bullets, the SELF-DEPLOY flow, and `CLAUDE.md` all DEFER here and never restate the
+merge step — so there is exactly one wording to read, and "the agent merges on approval" can never
+be misread as "a human merges." (Same dev-workflow rule as the `fedora-dev` build box — equalised.)**
 
 - **CONTROL-PLANE & GUARDRAIL class** — any `policy/**`, `managed-settings.json`, `*sudoers*`,
   `*.container` Quadlets, `sync-authorized-keys.sh`, `WORKLOAD_CONTAINERS`, `.github/workflows/**`,
