@@ -22,9 +22,17 @@
 #               FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core'.
 #               Reached over the desktop's SERVER-SIDE tailnet; prefer keyless
 #               Tailscale-SSH, else FLEET_SSH_KEY=/path/to/key (bind-mounted, not baked).
+#   USER1_NAME/USER1_PW, USER2_NAME/USER2_PW (optional) — up to TWO additional
+#               NON-privileged "knowledge wiki worker" desktop accounts, injected at
+#               spin-up. core stays the admin; a worker gets a desktop (Obsidian/Firefox/
+#               1Password/vault) but NO dev (no sudo/podman/claudebox). Each gets their
+#               OWN Guacamole web login (USERn_NAME / USERn_PW) landing ONLY on their own
+#               Desktop — fenced from the Dev/VPS bastion tiles — + their OWN persisted
+#               /home volume. Username: lowercase ^[a-z_][a-z0-9_-]{0,30}$, not core/root.
 #   TS_AUTHKEY  (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
-#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [FLEET_SSH='…'] [TS_AUTHKEY=…] ./run.sh
+#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [FLEET_SSH='…'] \
+#     [USER1_NAME=jenny USER1_PW='…'] [USER2_NAME=arthur USER2_PW='…'] [TS_AUTHKEY=…] ./run.sh
 #
 # ACCESS MODEL (load-bearing — do NOT widen the publish set):
 #   PUBLIC internet door — the ONLY -p publish:
@@ -57,6 +65,16 @@ TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; FLEET_SSH="${FLEET_SSH:-}"
 # image (Principle 5). Empty array expands to nothing when unset.
 FLEET_SSH_KEY="${FLEET_SSH_KEY:-}"; KEY_MOUNT=()
 [ -n "$FLEET_SSH_KEY" ] && KEY_MOUNT=(-v "$FLEET_SSH_KEY":/etc/fedora-desktop/fleet_ssh_key:ro)
+# Multi-user (optional): up to 2 non-privileged wiki-worker accounts. Each gets its OWN
+# persisted /home volume (fedora-desktop-userN) bound at its home path, so the worker's
+# vault / app-state / running SESSION survive container recreation (without this their
+# home would live on the ephemeral layer and be lost). Keep the same username per slot
+# across restarts. core's own home volume (below) is unchanged — no migration.
+USER1_NAME="${USER1_NAME:-}"; USER1_PW="${USER1_PW:-}"
+USER2_NAME="${USER2_NAME:-}"; USER2_PW="${USER2_PW:-}"
+USER_VOLS=()
+[ -n "$USER1_NAME" ] && USER_VOLS+=(-v "fedora-desktop-user1:/home/${USER1_NAME}")
+[ -n "$USER2_NAME" ] && USER_VOLS+=(-v "fedora-desktop-user2:/home/${USER2_NAME}")
 # WEB_PORT — the web gateway is the ONLY public door; its host port is changeable
 # at spin-up (DEFAULT 8443). Everything else — ssh, mosh, RDP, VNC — is TAILNET-ONLY
 # (never published; reached over the tailnet IP / Tailscale SSH).
@@ -72,7 +90,9 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
   [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"
-  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%s\n'  "$FLEET_SSH"; } > "$SECRETS"
+  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%s\n'  "$FLEET_SSH"
+  [ -n "$USER1_NAME" ] && printf 'USER1_NAME=%s\nUSER1_PW=%s\n' "$USER1_NAME" "$USER1_PW"
+  [ -n "$USER2_NAME" ] && printf 'USER2_NAME=%s\nUSER2_PW=%s\n' "$USER2_NAME" "$USER2_PW"; } > "$SECRETS"
 
 podman run -d --name fedora-desktop \
     --hostname fedora-desktop \
@@ -85,6 +105,7 @@ podman run -d --name fedora-desktop \
     --security-opt label=disable \
     -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
     "${KEY_MOUNT[@]}" \
+    "${USER_VOLS[@]}" \
     -v fedora-desktop-home:/home/core \
     -v fedora-desktop-state:/var/lib/tailscale \
     -v fedora-desktop-cert:/var/lib/guac-cert \
@@ -101,6 +122,9 @@ echo
 echo "Reach it:"
 echo "  web  https://<public-ip>:${WEB_PORT}/guacamole/   (PUBLIC, the only public door; login core / GUAC_PW)"
 [ -n "$FLEET_SSH" ] && echo "       + clientless fleet SSH tiles on the SAME door: $(printf '%s' "$FLEET_SSH" | tr ';' ',')   (no VPN needed)"
+if [ -n "$USER1_NAME" ] || [ -n "$USER2_NAME" ]; then
+  echo "       + wiki-worker desktop logins on the SAME door: ${USER1_NAME:+$USER1_NAME }${USER2_NAME}  (Desktop only — fenced from the fleet bastion; each has their own login + /home)"
+fi
 echo "  ssh  ssh core@<tailnet-ip>                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
 echo "  mosh mosh --ssh='ssh' core@<tailnet-ip>    (over the tailnet — TAILNET-ONLY)"
 echo "  RDP  <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"

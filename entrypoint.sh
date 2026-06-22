@@ -76,6 +76,51 @@ fi
 # Recursive chown — non-recursive leaves the cp'd dotfiles root-owned, which
 # breaks any non-sudo edit by core inside or outside the box.
 chown -R core:core /home/core
+# Data separation (multi-user): 0700 so NO other desktop user can read core's vault
+# or gh/OAuth tokens. All users share this container's kernel — DAC perms are the
+# fence, not a sandbox (disclosed in CLAUDE.md).
+chmod 700 /home/core
+
+# ============================================================================
+# MULTI-USER: optional non-privileged "knowledge wiki worker" accounts
+# ============================================================================
+# core stays the ADMIN (wheel + claudebox + rootless podman = full dev). Up to TWO
+# extra users may be injected at SPIN-UP via secrets.env (USER1_NAME/USER1_PW,
+# USER2_NAME/USER2_PW — Principle 5: runtime only, never a layer). They are "wiki
+# workers": a full XFCE desktop + the apps, but NO dev — NOT in wheel, no sudo, and
+# NO /etc/subuid row, so they cannot run rootless podman or reach the claudebox.
+# Each gets their OWN persisted /home/<user> volume (run.sh) + their OWN Guacamole
+# web login (built below), fenced from the Dev/VPS fleet-bastion tiles. Idempotent:
+# /home persists, so on restart we re-apply password + non-priv posture, never clobber
+# data. A valid+provisioned user keeps USER{i}_NAME set (the user-mapping reads it);
+# an invalid one is unset so it is skipped everywhere.
+for _i in 1 2; do
+  eval "_n=\${USER${_i}_NAME:-}; _p=\${USER${_i}_PW:-}"
+  if [ -z "$_n" ] || [ -z "$_p" ]; then eval "unset USER${_i}_NAME USER${_i}_PW"; continue; fi
+  case "$_n" in
+    core|root|tomcat|daemon|bin|sys|nobody)
+      echo "[users] refusing reserved name '$_n'"; eval "unset USER${_i}_NAME USER${_i}_PW"; continue ;;
+  esac
+  if ! printf '%s' "$_n" | grep -Eq '^[a-z_][a-z0-9_-]{0,30}$'; then
+    echo "[users] invalid username '$_n' — need ^[a-z_][a-z0-9_-]{0,30}$ — skipping"
+    eval "unset USER${_i}_NAME USER${_i}_PW"; continue
+  fi
+  if ! id -u "$_n" >/dev/null 2>&1; then
+    # CREATE non-privileged: NO -aG wheel, NO subuid/subgid row (rootless podman stays core-only).
+    if useradd -m -u "$((1000 + _i))" -s /bin/bash "$_n"; then
+      [ -e "/home/$_n/.bashrc" ] || cp -rT /etc/skel "/home/$_n" 2>/dev/null || true
+      printf '%s\n' "$(cat /etc/fedora-desktop/xsession 2>/dev/null || echo startxfce4)" > "/home/$_n/.Xclients"
+      chmod +x "/home/$_n/.Xclients"; chown -R "$_n:$_n" "/home/$_n"
+    else
+      echo "[users] useradd '$_n' failed — skipping"; eval "unset USER${_i}_NAME USER${_i}_PW"; continue
+    fi
+  fi
+  # ALWAYS (idempotent): set/rotate password, enforce non-priv + 0700 home.
+  echo "$_n:$_p" | chpasswd
+  gpasswd -d "$_n" wheel >/dev/null 2>&1 || true   # defensive: NEVER wheel
+  chmod 700 "/home/$_n"
+  echo "[users] provisioned non-dev wiki worker '$_n' (uid $(id -u "$_n"))"
+done
 
 # ---- rootless podman needs a runtime dir (no systemd/PAM session manager) ---
 install -d -m 0700 -o core -g core /run/user/1000
@@ -202,6 +247,35 @@ SSHCONN
     done
   fi
   printf '  </authorize>\n'
+  # ---- per-WORKER authorize blocks (multi-user, fenced from the bastion) -------
+  # Each provisioned wiki worker gets their OWN Guacamole web login (their username +
+  # password) that SSOs straight into ONLY their own loopback-RDP desktop session.
+  # The Dev/VPS bastion SSH tiles live solely in core's block above, so a worker can
+  # NEVER reach the fleet bastion (this is what makes "wiki workers have no dev" real
+  # at the web layer). color-depth=24 == core's: xrdp keys sessions on <User,BitPerPixel>,
+  # so 24 here is what lets each worker's session RESUME across devices. Passwords come
+  # from secrets.env and land only in this runtime 0600 file — never an image layer.
+  for _w in 1 2; do
+    eval "_wn=\${USER${_w}_NAME:-}; _wp=\${USER${_w}_PW:-}"
+    [ -n "$_wn" ] && [ -n "$_wp" ] || continue
+    _wn_x="$(xml_escape "$_wn")"; _wp_x="$(xml_escape "$_wp")"
+    cat <<WUSER
+  <authorize username="${_wn_x}" password="${_wp_x}">
+    <connection name="desktop-${_wn_x}">
+      <protocol>rdp</protocol>
+      <param name="hostname">127.0.0.1</param>
+      <param name="port">3389</param>
+      <param name="username">${_wn_x}</param>
+      <param name="password">${_wp_x}</param>
+      <param name="ignore-cert">true</param>
+      <param name="security">any</param>
+      <param name="resize-method">display-update</param>
+      <param name="color-depth">24</param>
+      ${RDP_AUDIO_PARAM}
+    </connection>
+  </authorize>
+WUSER
+  done
   printf '</user-mapping>\n'
 } > /etc/guacamole/user-mapping.xml
 chown tomcat:tomcat /etc/guacamole/user-mapping.xml

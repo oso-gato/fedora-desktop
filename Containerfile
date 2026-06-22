@@ -70,7 +70,11 @@ COPY policy/ /usr/local/share/fedora-dev/policy/
 # sandbox.sh are the desktop helpers the entrypoint invokes (cloud-sync,
 # vault-gitsync) or the wiki pipeline invokes on-demand (ingest-sandbox); they
 # ride in the seed so the first-boot live clone carries them.
-COPY --chmod=755 bin/claude bin/claudebox-rebuild /usr/local/bin/
+# 0750 core:core (not 0755): only the admin `core` may exec the claudebox wrappers —
+# non-privileged wiki-worker desktop users (uid 1001/1002) cannot launch claude /
+# rebuild the box. (Belt-and-braces: the host podman socket is already 0700 core, so
+# these would fail for a worker anyway; this keeps them off the wrappers entirely.)
+COPY --chown=core:core --chmod=750 bin/claude bin/claudebox-rebuild /usr/local/bin/
 COPY bin/ /usr/local/share/fedora-dev/bin/
 
 # Promotion-gate PreToolUse hook (gate-push.sh) + any other policy hooks. Stamped

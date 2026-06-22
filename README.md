@@ -183,6 +183,14 @@ with them via `run.sh` / the Quadlet:
    - **`GUAC_PW`** — **strong** (the public web login; the Guacamole gateway is the only public
      door, hardened by the `guacamole-auth-ban` brute-force lockout).
    - `RFB_PW` (optional) — arms the **tailnet-only** `:5900` native-VNC mirror (not a gateway choice).
+4. **Knowledge-wiki users (optional)** — how many ADDITIONAL desktop users beyond `core` (**0, 1, or 2**)?
+   `core` is always the admin (full dev). Each extra user is a **non-privileged "wiki worker"** (a
+   desktop + Obsidian/Firefox/1Password/vault, but **NO dev** — no sudo/podman/claudebox). For each,
+   ask a **username** (lowercase `^[a-z_][a-z0-9_-]{0,30}$`, not `core`/`root`) + a **strong password**,
+   passed as `USER1_NAME`/`USER1_PW` (+ `USER2_NAME`/`USER2_PW`). Each worker gets their OWN web login
+   landing only on their own Desktop (**fenced from the Dev/VPS bastion tiles**) + their OWN persisted
+   `/home` volume (`fedora-desktop-userN`). **0 extra users = today's single-`core` behavior, byte-identical.**
+   (Each worker's session is persistent + resumes across devices — see CLAUDE.md MULTI-USER.)
 
 ### Access model (public surface = the web port only)
 
@@ -205,6 +213,7 @@ the in-container `nft` guard — tailnet-only by *construction*, so a future `-p
 | `GUAC_PW` | **yes** | the public Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`). Use a STRONG one — the `guacamole-auth-ban` extension adds brute-force lockout on this, the only public door |
 | `RFB_PW` | no | **OPTIONAL** — arms the same-session native-VNC mirror on :5900 (tailnet-only; VncAuth — only first 8 chars effective). Not a gateway choice |
 | `TS_AUTHKEY` | no | unattended tailnet join (else the join is interactive — open the printed login URL once) |
+| `USER1_NAME` / `USER1_PW`, `USER2_NAME` / `USER2_PW` | no | **OPTIONAL** — up to 2 non-privileged "wiki worker" desktop accounts (username + strong password each). `core` stays admin; workers get a desktop but **NO dev**, their OWN web login (**Desktop-only, fenced from the Dev/VPS bastion**), and their OWN persisted `/home` volume (`fedora-desktop-userN`). See CLAUDE.md MULTI-USER |
 
 The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.
 

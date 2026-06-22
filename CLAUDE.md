@@ -274,6 +274,59 @@ turnkey `--system`+GDM Remote Login mode (add gdm, `grdctl --system`, enable
 is **host-validated on a delegating host, both Wayland lineages are EXPERIMENTAL** — deploy xrdp
 (X11) for production; grd/krdp are follow-up PRs gated on host validation.
 
+## MULTI-USER (core admin + up to 2 non-privileged wiki-workers)
+
+`core` (uid 1000, wheel) is ALWAYS the admin: full desktop + claudebox/claude-code +
+rootless podman = full dev. The entrypoint optionally provisions **up to two additional
+"knowledge wiki worker"** users from spin-up secrets (`USER1_NAME`/`USER1_PW`,
+`USER2_NAME`/`USER2_PW` — Principle 5, runtime only, never a layer; the host claudebox
+ASKS at spin-up per the README DEPLOY CONTRACT). **0 extra users = single-`core`
+behavior, byte-identical.** Created idempotently (`useradd -m` uid 1001/1002, `chpasswd`
+re-applied each boot, `/home` data never clobbered; username validated `^[a-z_][a-z0-9_-]{0,30}$`,
+not `core`/`root`).
+
+**WEB LAYER — per-user `<authorize>`, bastion-fenced.** The runtime `user-mapping.xml`
+emits ONE `<authorize>` per identity: `core`/`GUAC_PW` → Desktop **+ the Dev/VPS FLEET_SSH
+bastion tiles**; each worker `USERn_NAME`/`USERn_PW` → **only** their own Desktop RDP tile
+(SSO into their loopback session). A worker therefore can NEVER see or reach the fleet
+bastion at the web layer — this is what makes "wiki worker = no dev" real for the web door
+(there is no per-tile ACL in Guacamole file-auth, so fencing is by separate web login, NOT
+a shared `GUAC_PW`). Each user's web password == their OS password (one credential; SSO).
+
+**CROSS-DEVICE PERSISTENT RESUME — the bpp=24 INVARIANT (binding).** Each user gets ONE
+xrdp session that survives disconnect (`KillDisconnected=false`) and RESUMES from any device.
+xrdp `Policy=Default` keys a session on `<User,BitPerPixel>` only — IP and resolution are
+NOT keys (verified vs sesman.ini man) — so a reconnect from a different device/geometry at
+the SAME bpp resumes the same running session (`resize-method=display-update` reflows the
+viewport). **THE INVARIANT: pin 24 bpp on EVERY path** — `color-depth=24` on every Guacamole
+RDP connection (core + each worker), `xrdp-sesrun -b 24` pre-warm, Xorg's inherent 24 bpp,
+AND `max_bpp=24` in xrdp.ini (fences a native mstsc/FreeRDP client from negotiating 16/32
+and FORKING a second session). **Do NOT switch sesman `Policy` to UBD/UBI/UBDI** (they re-add
+DisplaySize/IP as keys → a phone forks a new session). A bpp mismatch is the one silent
+failure that breaks resume.
+
+**NON-DEV LOCKDOWN (workers).** NOT in `wheel`, no sudoers; **no `/etc/subuid` row** ⇒ cannot
+run rootless podman / reach the claudebox at all; `CONTAINER_HOST` export gated to uid 1000
+(`claudebox-init.sh`); the `claude`/`claudebox-rebuild` wrappers are `0750 core:core`; every
+home is `0700` (incl. `core`'s — so no user can read another's vault/tokens). `claude-code` +
+podman are **core-only by construction**. Each worker gets their OWN persisted `/home/<user>`
+volume (`fedora-desktop-userN`, bound in run.sh/the Quadlet) or their data would be lost on
+recreation.
+
+**SECURITY CEILING (disclose, do not paper over).** This is **OS-user (DAC) separation inside
+ONE shared container** — one kernel, SELinux-disabled, `SYS_ADMIN`/`NET_ADMIN`. "No dev" is a
+**policy boundary enforced by file perms + the 0700 podman-socket dir + no-subuid**, NOT a hard
+sandbox: a kernel priv-esc collapses it. For mutually-distrusting users you would run separate
+containers; this is for cooperating users (Arthur + a wiki collaborator) on one box. The vault
+is per-user (each 0700 home); `core` remains the sole git-sync orchestrator (policy/CLAUDE.md).
+
+**HOST-VALIDATION (Principle 9 — none provable in the nested engine; flag at deploy):**
+(a) 0 extra users still SSOs `core` straight to a tile list unchanged; (b) 1–2 users each get an
+independent live `:1x` session that PAINTS (watch for the XFCE second-session black-screen);
+(c) **the requirement:** `user1` from device A, disconnect, reconnect as `user1` from device B
+(different IP + screen) RESUMES the same session, apps still open; (d) non-dev proof as a worker:
+`sudo -v` denied, no `CONTAINER_HOST`/podman socket, `claude` not executable, cannot read `/home/core`.
+
 ## WEB-GATEWAY LOW-BANDWIDTH TUNING (verified vs L1 sources)
 
 The ONLY bandwidth that matters is the **browser ↔ server :8443** hop; the loopback RDP inside

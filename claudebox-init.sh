@@ -19,10 +19,13 @@ case "$host_uid" in (''|*[!0-9]*)
 esac
 
 # podman inside the box drives FEDORA-DEV's rootless engine through its API socket,
-# which distrobox bind-mounts at /run/user/<host_uid>/podman/podman.sock. Export it
-# for every login shell — this is the entire build/validate bridge.
-printf 'export CONTAINER_HOST=unix:///run/user/%s/podman/podman.sock\n' "$host_uid" \
-    > /etc/profile.d/10-host-podman.sh
+# which distrobox bind-mounts at /run/user/<host_uid>/podman/podman.sock. Export it —
+# but GATE it to the admin uid (core = host_uid) so non-privileged wiki-worker desktop
+# users (uid 1001/1002) never see CONTAINER_HOST and cannot reach the host engine /
+# claudebox. This is the "no dev for workers" boundary at the shell layer (the socket
+# dir is also 0700 core:core, so it would EACCES regardless — this is belt-and-braces).
+printf 'if [ "$(id -u)" = "%s" ]; then export CONTAINER_HOST=unix:///run/user/%s/podman/podman.sock; fi\n' \
+    "$host_uid" "$host_uid" > /etc/profile.d/10-host-podman.sh
 chmod 0644 /etc/profile.d/10-host-podman.sh
 
 # In-box `claudebox-rebuild`: how Claude (or anyone in the box) asks fedora-dev to
