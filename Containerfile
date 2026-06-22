@@ -30,10 +30,10 @@ ARG GUAC_VERSION=1.6.0
 # release may be signed by a different Apache committer key.
 ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
 
-# Desktop-environment variant selector (the xrdp-family build sequence):
-#   xfce (default) | mate | lxqt | kde  — swaps ONLY the minimal DE leaf set +
-#   the X session-start; the shared remote-access + app stack is unchanged. e.g.
-#   podman build --build-arg DESKTOP_ENV=mate -t fedora-desktop:mate-xrdp .
+# Desktop-environment selector. xrdp is XFCE-ONLY now: `xfce` is the sole accepted
+# value (install.sh's DESKTOP_ENV case rejects anything else). LXQt/KDE/MATE were
+# dropped (see CLAUDE.md "Desktop note"). The ARG is retained so the build/case stay
+# extensible, but the only valid build is the default.
 ARG DESKTOP_ENV=xfce
 
 # Web gateway: Apache Guacamole ONLY (the SOLE public :8443 browser door, fronting

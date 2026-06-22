@@ -61,7 +61,7 @@ applies the waiver label — that is correct, not a bug. Do NOT bundle it with f
 
 ## HEADLESS (binding prerequisite — EVERY variant, EVERY lineage)
 
-Every fedora-desktop image — the **xrdp** lineage (XFCE/LXQt) AND the
+Every fedora-desktop image — the **xrdp** lineage (XFCE only) AND the
 **grd** lineage (GNOME-Wayland / GRD), and any future lineage — MUST run
 **fully headless**: no physical monitor, no GPU, and no local login seat is ever attached or
 required for it to work. The desktop session is always a *virtual* display rendered by software
@@ -213,17 +213,22 @@ fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` 
 | guacamole-auth-jdbc | Apache `.tar.gz` (`GUAC_VERSION`) → `.jar` extension | c | the MySQL JDBC auth backend — moves the public door from file-auth to MariaDB so TOTP 2FA can store per-user enrollment seeds. No class-(a)/(b) source. **GPG-verified** against the SAME pinned Apache key (`GUAC_GPG_FP`), identical fetch+verify+extract pattern. We install ONLY the `mysql/guacamole-auth-jdbc-mysql-*.jar` into `/etc/guacamole/extensions/` and stash ONLY `mysql/schema/001-create-schema.sql`; the `002-create-admin-user.sql` guacadmin backdoor is NEVER shipped or loaded. A class-(c) artifact |
 | guacamole-auth-totp | Apache `.tar.gz` (`GUAC_VERSION`) → `.jar` extension | c | TOTP / Google-Authenticator 2FA on the public :8443 door — QR shown at first login, seed stored in the DB. No class-(a)/(b) source. **GPG-verified** against the SAME pinned Apache key (`GUAC_GPG_FP`), identical pattern; `.jar` into `/etc/guacamole/extensions/`. A class-(c) artifact |
 
-**Desktop-variant note (the `DESKTOP_ENV` xrdp family).** The XFCE rows above
-(`xfce4-session`…`xfce4-settings`) are the default/base DE leaf set. The `lxqt`
-variant REPLACES exactly that block with its own minimal leaf set, enumerated in
-`install.sh`'s `DESKTOP_ENV` case (the single source of truth for per-variant packages —
-"tabled by reference" there per Principle 3). Note: **polkit privilege-escalation dialogs
-are non-functional by design** in both variants (the no-systemd harness supervises no system
-D-Bus / `polkitd`) — fine for a vault/wiki + dev workstation that does no interactive system
-administration. (**Only XFCE [default] + LXQt [lighter] remain.** KDE was dropped — its KWin
-compositor assumes a GPU and is janky under llvmpipe, it is the most screen-churn over the
-low-bandwidth web door, and it is polkit-degraded, all for Plasma richness the self-contained
-app set doesn't use. MATE was dropped too — it added nothing over XFCE for this purpose.)
+**Desktop note (xrdp is XFCE-ONLY).** `DESKTOP_ENV=xfce` is the sole xrdp variant (the `case`
+in `install.sh` rejects anything else). The XFCE leaf set (`xfce4-session`…`xfce4-settings`) lives
+in that case (single source of truth, "tabled by reference" per Principle 3), PLUS baked `/etc/xdg`
+xfconf defaults tuned for the headless, no-GPU, still-image web door: **`xfwm4` compositing OFF**
+(the load-bearing runtime lever — no XRender shadow/transparency churn for guacd; xfwm4 also
+auto-disables it under llvmpipe, we PIN it for determinism), GTK animations off, and a **solid
+desktop colour** (no wallpaper image → smaller dirty-region encode on connect; the backdrop's
+monitor-name key is host-validated). Note: **polkit privilege-escalation dialogs are
+non-functional by design** (the no-systemd harness supervises no system D-Bus / `polkitd`) — fine
+for a vault/wiki + dev box that does no interactive sysadmin.
+(**LXQt, KDE and MATE xrdp variants were all dropped** — verified unanimous across an ultra-verify
+fan-out. KDE: GPU-assuming KWin janky under llvmpipe + heaviest web-door churn + polkit-degraded.
+MATE: nothing over XFCE. LXQt: the "lighter" folklore INVERTS here — this image already keeps the
+GTK3 stack resident for Firefox/Electron, so XFCE rides it at ~zero marginal toolkit cost while
+LXQt adds a net-new Qt6/KF6 runtime [~2× the incremental packages] + a Fedora-44 Mir/Wayland
+compositor stack the X11/xrdp build discards.)
 
 ## THE TWO LINEAGES — one repo, two init/desktop contracts
 
@@ -246,7 +251,7 @@ WRONG TOOL for a headless RDP door, not merely unproven. (An earlier draft of th
 
 | Lineage (file) | Init | Desktop | RDP server | VNC server | size | Validation |
 |---|---|---|---|---|---|---|
-| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/LXQt on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | ~3.65 GB (XFCE) | full (build→run→probe) — **the proven, production lineage** |
+| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE on **X11** (`DESKTOP_ENV=xfce`, sole variant) | xrdp | `x0vncserver` (TigerVNC) | ~3.65 GB | full (build→run→probe) — **the proven, production lineage** |
 | **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
 
 **Disclosed hard-dep closure (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**

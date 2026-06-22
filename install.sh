@@ -248,8 +248,7 @@ EOF
 : "${DESKTOP_ENV:=xfce}"
 case "$DESKTOP_ENV" in
   xfce) DE_PKGS="xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar xfce4-settings"; XSESSION="startxfce4" ;;
-  lxqt) DE_PKGS="lxqt-session lxqt-panel lxqt-config openbox qterminal pcmanfm-qt lxqt-qtplugin"; XSESSION="lxqt-session" ;;
-  *) echo "FATAL: unknown DESKTOP_ENV='$DESKTOP_ENV' (want: xfce|lxqt)" >&2; exit 1 ;;
+  *) echo "FATAL: unknown DESKTOP_ENV='$DESKTOP_ENV' (want: xfce — the sole xrdp DE; LXQt/KDE/MATE were dropped)" >&2; exit 1 ;;
 esac
 echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | session='$XSESSION'"
 
@@ -493,6 +492,66 @@ if [ -f /etc/xrdp/gfx.toml ]; then
     sed -i 's/^order *=.*/order = [ "H.264", "RFX" ]/' /etc/xrdp/gfx.toml
     sed -i 's/^h264_encoder *=.*/h264_encoder = "OpenH264"/' /etc/xrdp/gfx.toml || true
 fi
+
+# ---- XFCE runtime tuning for the headless, no-GPU, still-image web door ------
+# Baked as /etc/xdg xfconf DEFAULTS (apply on a fresh /home volume; a user can still
+# override). The load-bearing lever is COMPOSITING OFF: xfwm4 already auto-disables it
+# under the llvmpipe software renderer, but we PIN it so it is deterministic across
+# xfwm4 versions — no XRender shadows/transparency => no full-frame readback churn for
+# guacd to re-encode over the intra-frame still-image door. Plus a flat, animation-free
+# theme and a SOLID desktop colour (no photographic wallpaper => smaller initial
+# dirty-region encode on connect). XFCE is GTK3, so it rides the already-installed GTK
+# stack (Firefox/Electron) — no second toolkit resident at runtime (vs LXQt's Qt6/KF6).
+XFCONF=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+install -d -m 0755 "$XFCONF"
+cat > "$XFCONF/xfwm4.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+  </property>
+</channel>
+XML
+cat > "$XFCONF/xsettings.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="EnableAnimations" type="bool" value="false"/>
+  </property>
+</channel>
+XML
+# Solid desktop colour, no wallpaper image. NOTE: xfdesktop keys the backdrop on the
+# RANDR monitor name; under xorgxrdp this is commonly "monitor0" but HOST-VALIDATE — if
+# the live output name differs, the solid colour is a trivial per-user setting. The
+# compositing-off above is monitor-INDEPENDENT and is the real runtime lever.
+cat > "$XFCONF/xfce4-desktop.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="single-workspace-mode" type="bool" value="true"/>
+    <property name="single-workspace-number" type="int" value="0"/>
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="image-style" type="int" value="0"/>
+          <property name="color-style" type="int" value="0"/>
+          <property name="rgba1" type="array">
+            <value type="double" value="0.16"/>
+            <value type="double" value="0.18"/>
+            <value type="double" value="0.22"/>
+            <value type="double" value="1.0"/>
+          </property>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
+XML
 
 dbus-uuidgen --ensure
 dnf clean all

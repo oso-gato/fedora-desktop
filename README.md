@@ -176,12 +176,14 @@ maintainer asks the host (`fedora-bootstrap`) claudebox to spin up fedora-deskto
 claudebox **MUST ask the operator for** the following (never hardcode, never invent), then deploy
 with them via `run.sh` / the Quadlet:
 
-1. **Lineage + variant** — `xrdp` (proven; `DESKTOP_ENV` ∈ `xfce`/`lxqt`, `xfce` = default) is the
-   deployable default; `grd` is **EXPERIMENTAL** (Wayland headless host-validation pending).
-   (`krdp` was REMOVED — KRdp has no headless mode; the `kde` + `mate` xrdp variants were dropped —
-   KDE is GPU-assuming/janky under llvmpipe + heaviest web-door churn, MATE added nothing over XFCE.)
-   CI publishes every variant to GHCR — pull the tag you want:
-   `:xfce` (= `:latest`) · `:lxqt` (xrdp lineage) · `:grd`
+1. **Lineage + variant** — `xrdp` (proven; **XFCE-only**, `DESKTOP_ENV=xfce`) is the deployable
+   default; `grd` is **EXPERIMENTAL** (Wayland headless host-validation pending).
+   (`krdp` was REMOVED — KRdp has no headless mode. The `kde`/`mate`/`lxqt` xrdp variants were
+   dropped: KDE is GPU-assuming/janky under llvmpipe; MATE adds nothing over XFCE; and "LXQt is
+   lighter" inverts here — the image already keeps GTK3 resident for Firefox/Electron, so XFCE
+   rides it while LXQt adds a net-new Qt6/KF6 runtime nothing else uses.)
+   CI publishes each variant to GHCR — pull the tag you want:
+   `:xfce` (= `:latest`, xrdp lineage) · `:grd`
    (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd image builds + signs, but
    its *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
