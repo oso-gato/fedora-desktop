@@ -113,8 +113,9 @@ podman run -d --name fedora-desktop \
     -v fedora-desktop-home:/home/core \
     -v fedora-desktop-state:/var/lib/tailscale \
     -v fedora-desktop-cert:/var/lib/guac-cert \
+    -v fedora-desktop-db:/var/lib/mysql \
     -p ${WEB_PORT}:8443 \
-    --health-cmd "bash -c '[ \$(curl -sk -o /dev/null -w %{http_code} ${HEALTH_URL}) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/${BACKEND_PORT}'" \
+    --health-cmd "bash -c '[ \$(curl -sk -o /dev/null -w %{http_code} ${HEALTH_URL}) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/${BACKEND_PORT} && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'" \
     --health-interval 30s --health-timeout 5s --health-retries 3 --health-start-period 60s \
     "$IMAGE"
 rm -f "$SECRETS"   # host copy gone; the bind-mount keeps it readable to PID 1 only (0700 dir)

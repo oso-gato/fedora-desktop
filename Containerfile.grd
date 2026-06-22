@@ -57,7 +57,7 @@ COPY --chmod=755 bin/claude bin/claudebox-rebuild /usr/local/bin/
 COPY bin/ /usr/local/share/fedora-dev/bin/
 COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 
-VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert"]
+VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
 # EXPOSE is metadata only (run.sh.grd / the Quadlet own the publish set). ONLY
 # 8443 (Guacamole web), 4444->22 (ssh), mosh are public; 3389 (GRD RDP) + 5900
