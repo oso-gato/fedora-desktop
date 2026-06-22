@@ -148,6 +148,22 @@ jobs:
     # push/cron/dispatch paths building while still blocking on a FAILED guard.
     if: always() && (needs.control-plane-guard.result == 'success' || needs.control-plane-guard.result == 'skipped')
     runs-on: ubuntu-latest
+    # MATRIX — build + publish EVERY desktop/lineage variant. fail-fast:false so one
+    # variant failing NEVER blocks the others from publishing. xrdp is the PROVEN
+    # lineage (xfce = :latest); grd/krdp are EXPERIMENTAL (Wayland, systemd-PID-1):
+    # they ASSEMBLY-build here on a real runner, but their RUNTIME (booting the
+    # session) is host-validation-only — a green build means "image published", NOT
+    # "boots". Published tags: :xfce :mate :lxqt :kde :grd :krdp (+ :latest = xfce).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: xfce, file: Containerfile,      desktop_env: xfce, latest: "true" }
+          - { tag: mate, file: Containerfile,      desktop_env: mate }
+          - { tag: lxqt, file: Containerfile,      desktop_env: lxqt }
+          - { tag: kde,  file: Containerfile,      desktop_env: kde  }
+          - { tag: grd,  file: Containerfile.grd }
+          - { tag: krdp, file: Containerfile.krdp }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -164,21 +180,35 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3
 
-      - name: Compute tags
+      - name: Compute tags (per variant)
         id: meta
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ matrix.tag }}
+          IS_LATEST: ${{ matrix.latest }}
         run: |
-          echo "date=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          d=$(date +%Y%m%d); img="ghcr.io/${OWNER}/fedora-desktop"
+          {
+            echo "tags<<EOF"
+            echo "${img}:${TAG}"
+            echo "${img}:${TAG}-${d}"
+            echo "${img}:${TAG}-${GITHUB_SHA::7}"
+            if [ "${IS_LATEST}" = "true" ]; then echo "${img}:latest"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # PRINCIPLE 2(c) mechanical backstop: every executable on $PATH in the built
-      # image must be owned by an rpm, except the repo's own COPY'd wrappers. This
-      # is what makes the "no loose binary / tarball-on-PATH" rule a CHECK, not just
-      # prose — a smuggled class-(c) loose binary fails the build.
+      # image must be owned by an rpm, except the repo's own COPY'd wrappers. Runs per
+      # variant (the matrix Containerfile + DESKTOP_ENV); the allowlist covers all
+      # three lineage entrypoints. A smuggled class-(c) loose binary fails the build.
       - name: No-loose-binary backstop (Principle 2c)
+        env:
+          FILE: ${{ matrix.file }}
+          DE: ${{ matrix.desktop_env }}
         run: |
-          docker build -t fd-loosecheck -f Containerfile .
+          docker build ${DE:+--build-arg DESKTOP_ENV=$DE} -f "$FILE" -t fd-loosecheck .
           docker run --rm --entrypoint bash fd-loosecheck -c '
-            allow="/usr/local/bin/entrypoint.sh /usr/local/bin/claude /usr/local/bin/claudebox-rebuild"
+            allow="/usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint-grd.sh /usr/local/bin/entrypoint-krdp.sh /usr/local/bin/claude /usr/local/bin/claudebox-rebuild"
             bad=0
             IFS=:
             for d in $PATH; do
@@ -186,10 +216,9 @@ jobs:
               for f in "$d"/*; do
                 [ -f "$f" ] && [ -x "$f" ] || continue
                 case " $allow " in *" $f "*) continue ;; esac
-                # rpm-owned directly, OR a symlink whose target is rpm-owned: the
-                # 1Password vendor rpm scriptlet-creates /usr/bin/1password ->
-                # /opt/1Password/1password (the TARGET is rpm-owned; the link path is
-                # in no manifest). A genuinely loose binary fails BOTH checks.
+                # rpm-owned directly, OR a symlink whose target is rpm-owned (e.g. the
+                # 1Password vendor symlink /usr/bin/1password -> /opt/1Password/1password).
+                # A genuinely loose binary fails BOTH checks.
                 rpm -qf "$f" >/dev/null 2>&1 || rpm -qf "$(readlink -f "$f")" >/dev/null 2>&1 \
                   || { echo "NON-RPM ON PATH: $f"; bad=1; }
               done
@@ -203,22 +232,18 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Containerfile
+          file: ${{ matrix.file }}
+          # DESKTOP_ENV only for the xrdp lineage; grd/krdp have a fixed DE (no arg).
+          build-args: ${{ matrix.desktop_env && format('DESKTOP_ENV={0}', matrix.desktop_env) || '' }}
           # PRs validate the build only — never push a PR image to the registry.
           push: ${{ github.event_name != 'pull_request' }}
           # --no-cache on the monthly cron so RPMs + the Obsidian AppImage refresh.
           no-cache: ${{ github.event_name == 'schedule' }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/fedora-desktop:latest
-            ghcr.io/${{ github.repository_owner }}/fedora-desktop:${{ steps.meta.outputs.date }}
-            ghcr.io/${{ github.repository_owner }}/fedora-desktop:${{ steps.meta.outputs.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
 
-      # Keyless cosign signing via GitHub Actions OIDC. Signs the IMMUTABLE
-      # manifest digest (not the mutable tags); the signature attaches to the
-      # registry as an OCI artifact next to the image. The host's policy.json
-      # flips from `insecureAcceptAnything` to `sigstoreSigned` (pinned to this
-      # CI OIDC identity) is Arthur's one-time item #2 in policy/CLAUDE.md —
-      # until then the signature is an audit trail, not an enforced gate.
+      # Keyless cosign signing via GitHub Actions OIDC — signs THIS variant's IMMUTABLE
+      # digest. Host policy.json -> sigstoreSigned (pinned to this OIDC identity) is
+      # Arthur's one-time item; until then the signature is an audit trail.
       - name: Sign image with cosign
         if: github.event_name != 'pull_request'
         env:
