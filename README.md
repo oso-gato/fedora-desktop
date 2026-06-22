@@ -100,12 +100,12 @@ cloud is rclone-only.
 | fuse-overlayfs | harness | a | nested rootless storage driver (kernel forbids native overlay-on-overlay) |
 | passt | harness | a | pasta — podman 5's default rootless network backend |
 | nftables | harness | a | firewall backend: tailscaled programs rules via the nftables Netlink API, netavark defaults to nftables on Fedora 41+, fail2ban bans via `nftables[type=multiport]`. (No iptables — verified unnecessary.) |
-| openssh-server | harness | a | the login door (key-only; keys synced from `github.com/oso-gato.keys` each start). Public ssh on host :4444 → :22 AND keyless Tailscale SSH on the tailnet; mosh bootstraps over either |
+| openssh-server | harness | a | the login door (key-only; keys synced from `github.com/oso-gato.keys` each start). **TAILNET-ONLY** — keyless Tailscale SSH + ssh-key over the tailnet (never `-p`; the nft guard drops :22 off non-tailnet ifaces); mosh bootstraps over it |
 | mosh | harness | a | roaming-resilient remote shell (UDP, AEAD-authenticated). Public UDP range 61001-62000 (non-default, to avoid colliding with the bootstrap host's own mosh) |
 | tmux | harness | a | session multiplexer; every interactive login auto-attaches `main`; survives disconnects/restarts |
 | distrobox | harness | a | declaratively bootstraps the in-container claudebox via `distrobox assemble create --file distrobox.ini` |
 | inotify-tools | harness | a | `inotifywait` watches the in-box `rebuild.request` flag (no systemd `.path` units — no systemd inside, by design) |
-| fail2ban-server | harness | a | brute-force mitigation on public :4444; bans via `nftables[type=multiport]`; tailnet CGNAT 100.64.0.0/10 is `ignoreip`'d. The **leaf** package (the `fail2ban` metapackage hard-pulls firewalld + esmtp — see Principle 3) |
+| fail2ban-server | harness | a | brute-force mitigation on the ssh auth path (defense-in-depth; ssh is tailnet-only); bans via `nftables[type=multiport]`; tailnet CGNAT 100.64.0.0/10 is `ignoreip`'d. The **leaf** package (the `fail2ban` metapackage hard-pulls firewalld + esmtp — see Principle 3) |
 | rsyslog | harness | a | captures sshd's AUTHPRIV to `/var/log/secure` so fail2ban can read it (no journald in this container) |
 | sudo | harness | a | break-glass escalation (`core` in `wheel`); near-zero footprint (host-side `podman exec -u 0` is the real recovery door) |
 | procps-ng | harness | a | `pgrep` for the entrypoint watchdog AND the `--health-cmd` |
@@ -242,16 +242,19 @@ The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.
 
 | Path | Port | Exposure | Auth |
 |---|---|---|---|
-| 🌐 Guacamole web (TLS) | 8443/tcp | **PUBLIC** — the only public desktop door | web login `core` / `GUAC_PW` → SSO into local RDP |
-| 🔑 SSH | host 4444 → :22 | **PUBLIC** | key-only (keys from `github.com/oso-gato.keys`); fail2ban-guarded |
-| 📡 Mosh | 61001-62000/udp | **PUBLIC** | rides over the key-auth ssh |
-| 🪪 Tailscale SSH | tailnet :22 | tailnet | keyless (Tailscale identity) — primary maintenance path |
+| 🌐 Guacamole web (TLS) | `${WEB_PORT}`→8443/tcp | **PUBLIC — the ONLY public door** | web login `core` / `GUAC_PW` **+ TOTP 2FA** → SSO into local RDP |
+| 🪪 Tailscale SSH | tailnet :22 | tailnet-only | keyless (Tailscale identity) — **the primary maintenance / recovery path** |
+| 🔑 SSH (key) | :22 | **TAILNET-ONLY (never `-p`)** | ssh-key over the tailnet (keys from `github.com/oso-gato.keys`); fail2ban-guarded |
+| 📡 Mosh | UDP | **TAILNET-ONLY** | over the tailnet ssh |
 | 🖥️ RDP | 3389/tcp | **TAILNET-ONLY (never `-p`)** | `core` / `RDP_PW` (native clients: mstsc, Windows App) |
 | 🖲️ VNC | 5900/tcp | **TAILNET-ONLY (never `-p`)** | `RFB_PW` (only if set) — mirrors the RDP session |
 
 Password-auth (RDP/VNC/Guacamole) therefore never crosses the public internet except inside
-the TLS-terminated Guacamole door. **`run.sh` and the Quadlet publish ONLY `8443`, `4444:22`,
-and `61001-62000/udp`** — `3389` and `5900` are reachable only over the tailnet.
+the TLS-terminated Guacamole door. **`run.sh`, `run.sh.grd` and the Quadlet publish ONLY the web
+port (`${WEB_PORT}`→8443).** ssh/mosh/RDP/VNC are tailnet-only (never `-p`) **and** dropped on
+non-`lo`/non-`tailscale0` interfaces by the in-container `nft` guard. **There is NO public ssh
+door** — recovery if the tailnet is unreachable is host-side (`podman exec`), not a public `:4444`
+(an earlier draft of this table wrongly listed one; the deploy scripts have always published web-only).
 
 ### run.sh (interactive / non-systemd hosts)
 
@@ -303,7 +306,7 @@ per-device client cert). Each additional user enrolls their own seed on their fi
 ```sh
 # Browser (public): https://<host>:8443/guacamole/   → login core / GUAC_PW → full XFCE desktop
 # RDP (tailnet):     <tailnet-ip>:3389                → login core / RDP_PW (native client)
-# Terminal:          ssh core@<tailnet-ip>            (keyless) or  ssh -p 4444 core@<public-ip> (key)
+# Terminal:          ssh core@<tailnet-ip>            (keyless Tailscale SSH, or ssh-key over the tailnet)
 ```
 
 In the desktop (or any ssh/mosh shell, all land in tmux `main`), open a terminal and run
