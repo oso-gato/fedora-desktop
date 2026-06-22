@@ -248,10 +248,8 @@ EOF
 : "${DESKTOP_ENV:=xfce}"
 case "$DESKTOP_ENV" in
   xfce) DE_PKGS="xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar xfce4-settings"; XSESSION="startxfce4" ;;
-  mate) DE_PKGS="mate-session-manager marco mate-panel mate-terminal caja mate-settings-daemon"; XSESSION="mate-session" ;;
   lxqt) DE_PKGS="lxqt-session lxqt-panel lxqt-config openbox qterminal pcmanfm-qt lxqt-qtplugin"; XSESSION="lxqt-session" ;;
-  kde)  DE_PKGS="plasma-workspace-x11 plasma-desktop kwin-x11 konsole dolphin"; XSESSION="startplasma-x11" ;;
-  *) echo "FATAL: unknown DESKTOP_ENV='$DESKTOP_ENV' (want: xfce|mate|lxqt|kde)" >&2; exit 1 ;;
+  *) echo "FATAL: unknown DESKTOP_ENV='$DESKTOP_ENV' (want: xfce|lxqt)" >&2; exit 1 ;;
 esac
 echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | session='$XSESSION'"
 

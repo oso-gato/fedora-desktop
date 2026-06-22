@@ -86,7 +86,7 @@ WEB_PORT="${WEB_PORT:-8443}"
 # -e`, which would persist RDP_PW/GUAC_PW in `podman inspect` + /proc/1/environ for
 # the container's whole life. The entrypoint SOURCES this into shell vars (never
 # exported, so never in PID 1's environ) and unsets them after use — parity with
-# the grd/krdp lineages, which already moved off `-e`.
+# the grd lineages, which already moved off `-e`.
 SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 { printf 'RDP_PW=%s\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
