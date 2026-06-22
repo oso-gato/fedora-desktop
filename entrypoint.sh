@@ -94,7 +94,7 @@ chmod 700 /home/core
 # /home persists, so on restart we re-apply password + non-priv posture, never clobber
 # data. A valid+provisioned user keeps USER{i}_NAME set (the user-mapping reads it);
 # an invalid one is unset so it is skipped everywhere.
-for _i in 1 2; do
+for _i in 1 2 3 4 5; do
   eval "_n=\${USER${_i}_NAME:-}; _p=\${USER${_i}_PW:-}"
   if [ -z "$_n" ] || [ -z "$_p" ]; then eval "unset USER${_i}_NAME USER${_i}_PW"; continue; fi
   case "$_n" in
@@ -105,6 +105,11 @@ for _i in 1 2; do
     echo "[users] invalid username '$_n' — need ^[a-z_][a-z0-9_-]{0,30}$ — skipping"
     eval "unset USER${_i}_NAME USER${_i}_PW"; continue
   fi
+  # Normalize this user's FLEET access grant (none|dev|host|both); invalid -> none.
+  # This selects which Dev/VPS bastion tiles the user's web login shows (the user-mapping
+  # reads USER{i}_ACCESS below). Grant = bastion reach (lands as core on the target).
+  eval "_a=\${USER${_i}_ACCESS:-none}"; case "$_a" in none|dev|host|both) ;; *) _a=none ;; esac
+  eval "USER${_i}_ACCESS=\$_a"
   if ! id -u "$_n" >/dev/null 2>&1; then
     # CREATE non-privileged: NO -aG wheel, NO subuid/subgid row (rootless podman stays core-only).
     if useradd -m -u "$((1000 + _i))" -s /bin/bash "$_n"; then
@@ -210,6 +215,32 @@ RDP_PW_X="$(xml_escape "${RDP_PW}")"
 ssh_keyparam=""
 [ -r /etc/fedora-desktop/fleet_ssh_key ] && \
     ssh_keyparam="<param name=\"private-key\">$(cat /etc/fedora-desktop/fleet_ssh_key)</param>"
+# emit_fleet_tiles <access> — print the FLEET_SSH browser-SSH tiles this identity is
+# granted. access: all (core) | both | dev | host | none. Maps a grant to FLEET_SSH
+# entries BY LABEL (dev -> a *dev* label; host -> a *vps*/*host* label); core gets all.
+emit_fleet_tiles() {
+  _acc="$1"; [ "$_acc" = none ] && return 0; [ -n "${FLEET_SSH:-}" ] || return 0
+  printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
+    [ -n "$f_label" ] && [ -n "$f_host" ] || continue
+    case "$_acc" in
+      all) : ;;
+      both) case "$f_label" in *dev*|*vps*|*host*) : ;; *) continue ;; esac ;;
+      dev)  case "$f_label" in *dev*) : ;; *) continue ;; esac ;;
+      host) case "$f_label" in *vps*|*host*) : ;; *) continue ;; esac ;;
+      *) continue ;;
+    esac
+    f_port="${f_port:-22}"; case "$f_port" in (*[!0-9]*|'') f_port=22 ;; esac
+    cat <<SSHCONN
+    <connection name="ssh-$(xml_escape "$f_label")">
+      <protocol>ssh</protocol>
+      <param name="hostname">$(xml_escape "$f_host")</param>
+      <param name="port">${f_port}</param>
+      <param name="username">$(xml_escape "${f_user:-core}")</param>
+      ${ssh_keyparam}
+    </connection>
+SSHCONN
+  done
+}
 {
   printf '<user-mapping>\n'
   printf '  <authorize username="core" password="%s">\n' "${GUAC_PW_X}"
@@ -231,36 +262,22 @@ ssh_keyparam=""
       ${RDP_AUDIO_PARAM}
     </connection>
 RDPCONN
-  if [ -n "${FLEET_SSH:-}" ]; then
-    printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
-      [ -n "$f_label" ] && [ -n "$f_host" ] || continue
-      f_port="${f_port:-22}"; case "$f_port" in (*[!0-9]*|'') f_port=22 ;; esac
-      cat <<SSHCONN
-    <connection name="ssh-$(xml_escape "$f_label")">
-      <protocol>ssh</protocol>
-      <param name="hostname">$(xml_escape "$f_host")</param>
-      <param name="port">${f_port}</param>
-      <param name="username">$(xml_escape "${f_user:-core}")</param>
-      ${ssh_keyparam}
-    </connection>
-SSHCONN
-    done
-  fi
+  emit_fleet_tiles all   # core (admin) always sees every fleet tile (Dev + VPS)
   printf '  </authorize>\n'
-  # ---- per-WORKER authorize blocks (multi-user, fenced from the bastion) -------
-  # Each provisioned wiki worker gets their OWN Guacamole web login (their username +
-  # password) that SSOs straight into ONLY their own loopback-RDP desktop session.
-  # The Dev/VPS bastion SSH tiles live solely in core's block above, so a worker can
-  # NEVER reach the fleet bastion (this is what makes "wiki workers have no dev" real
-  # at the web layer). color-depth=24 == core's: xrdp keys sessions on <User,BitPerPixel>,
-  # so 24 here is what lets each worker's session RESUME across devices. Passwords come
-  # from secrets.env and land only in this runtime 0600 file — never an image layer.
-  for _w in 1 2; do
-    eval "_wn=\${USER${_w}_NAME:-}; _wp=\${USER${_w}_PW:-}"
+  # ---- per-USER authorize blocks (multi-user, up to 5 extra users) -------------
+  # Each provisioned user gets their OWN Guacamole web login (their username +
+  # password) that SSOs into their own loopback-RDP desktop session, PLUS the Dev/VPS
+  # fleet tiles their spin-up grant allows (USER{i}_ACCESS = none|dev|host|both;
+  # default none = Desktop only). core's block (above) always gets ALL tiles.
+  # color-depth=24 == core's: xrdp keys sessions on <User,BitPerPixel>, so 24 here is
+  # what lets each user's session RESUME across devices. Passwords come from secrets.env
+  # and land only in this runtime 0600 file — never an image layer.
+  for _w in 1 2 3 4 5; do
+    eval "_wn=\${USER${_w}_NAME:-}; _wp=\${USER${_w}_PW:-}; _wa=\${USER${_w}_ACCESS:-none}"
     [ -n "$_wn" ] && [ -n "$_wp" ] || continue
     _wn_x="$(xml_escape "$_wn")"; _wp_x="$(xml_escape "$_wp")"
+    printf '  <authorize username="%s" password="%s">\n' "$_wn_x" "$_wp_x"
     cat <<WUSER
-  <authorize username="${_wn_x}" password="${_wp_x}">
     <connection name="desktop-${_wn_x}">
       <protocol>rdp</protocol>
       <param name="hostname">127.0.0.1</param>
@@ -273,8 +290,9 @@ SSHCONN
       <param name="color-depth">24</param>
       ${RDP_AUDIO_PARAM}
     </connection>
-  </authorize>
 WUSER
+    emit_fleet_tiles "$_wa"
+    printf '  </authorize>\n'
   done
   printf '</user-mapping>\n'
 } > /etc/guacamole/user-mapping.xml

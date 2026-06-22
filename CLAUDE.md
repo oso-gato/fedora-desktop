@@ -274,24 +274,30 @@ turnkey `--system`+GDM Remote Login mode (add gdm, `grdctl --system`, enable
 is **host-validated on a delegating host, both Wayland lineages are EXPERIMENTAL** — deploy xrdp
 (X11) for production; grd/krdp are follow-up PRs gated on host validation.
 
-## MULTI-USER (core admin + up to 2 non-privileged wiki-workers)
+## MULTI-USER (core admin + up to 5 additional users, per-user fleet access)
 
 `core` (uid 1000, wheel) is ALWAYS the admin: full desktop + claudebox/claude-code +
-rootless podman = full dev. The entrypoint optionally provisions **up to two additional
-"knowledge wiki worker"** users from spin-up secrets (`USER1_NAME`/`USER1_PW`,
-`USER2_NAME`/`USER2_PW` — Principle 5, runtime only, never a layer; the host claudebox
-ASKS at spin-up per the README DEPLOY CONTRACT). **0 extra users = single-`core`
-behavior, byte-identical.** Created idempotently (`useradd -m` uid 1001/1002, `chpasswd`
-re-applied each boot, `/home` data never clobbered; username validated `^[a-z_][a-z0-9_-]{0,30}$`,
-not `core`/`root`).
+rootless podman = full dev. The entrypoint optionally provisions **up to FIVE additional
+desktop users** from spin-up secrets (`USER{1..5}_NAME`/`_PW`/`_ACCESS` — Principle 5,
+runtime only, never a layer; the interactive `spin-up.sh` wizard or the host claudebox ASKS
+at spin-up per the README DEPLOY CONTRACT). **0 extra users = single-`core` behavior,
+byte-identical.** Created idempotently (`useradd -m` uid 1000+n, `chpasswd` re-applied each
+boot, `/home` data never clobbered; username validated `^[a-z_][a-z0-9_-]{0,30}$`, not
+reserved). Each additional user is non-privileged by construction (NOT in `wheel`, no
+sudoers, no `/etc/subuid` row → no rootless podman / no claudebox); a user with no fleet
+grant is a pure "wiki worker" (desktop + vault, zero dev reach).
 
-**WEB LAYER — per-user `<authorize>`, bastion-fenced.** The runtime `user-mapping.xml`
-emits ONE `<authorize>` per identity: `core`/`GUAC_PW` → Desktop **+ the Dev/VPS FLEET_SSH
-bastion tiles**; each worker `USERn_NAME`/`USERn_PW` → **only** their own Desktop RDP tile
-(SSO into their loopback session). A worker therefore can NEVER see or reach the fleet
-bastion at the web layer — this is what makes "wiki worker = no dev" real for the web door
-(there is no per-tile ACL in Guacamole file-auth, so fencing is by separate web login, NOT
-a shared `GUAC_PW`). Each user's web password == their OS password (one credential; SSO).
+**WEB LAYER — per-user `<authorize>`, per-grant fleet tiles.** The runtime `user-mapping.xml`
+emits ONE `<authorize>` per identity (their own web login → SSO into their own loopback-RDP
+desktop, via `emit_fleet_tiles`). `core`/`GUAC_PW` → Desktop **+ ALL Dev/VPS FLEET_SSH bastion
+tiles**. Each extra user → their own Desktop **+ only the bastion tiles their `USERn_ACCESS`
+grant allows** (`none` → Desktop only; `dev` → the dev tile; `host` → the vps tile; `both` →
+both). Tiles are scoped by SEPARATE web login (Guacamole file-auth has no per-tile ACL), so a
+`none` user genuinely cannot see or reach the fleet. **Security note on grants:** a `dev`/`host`
+tile reaches that box over the desktop's tailnet via keyless Tailscale-SSH = a **`core` (admin)
+shell** there — so granting `dev`/`host` is an admin-level grant, NOT a sandboxed login
+(per-user identities on dev/host would need accounts provisioned there — a cross-repo
+follow-up). Each user's web password == their OS password (one credential; SSO).
 
 **CROSS-DEVICE PERSISTENT RESUME — the bpp=24 INVARIANT (binding).** Each user gets ONE
 xrdp session that survives disconnect (`KillDisconnected=false`) and RESUMES from any device.
