@@ -153,16 +153,16 @@ jobs:
     # lineage (xfce = :latest); grd is EXPERIMENTAL (Wayland, systemd-PID-1):
     # it ASSEMBLY-builds here on a real runner, but its RUNTIME (booting the
     # session) is host-validation-only — a green build means "image published", NOT
-    # "boots". Published tags: :xfce :mate :lxqt :kde :grd (+ :latest = xfce).
-    # (krdp was REMOVED: KRdp has no headless mode — the wrong tool for a headless RDP door.)
+    # "boots". Published tags: :xfce :lxqt :grd (+ :latest = xfce).
+    # (krdp REMOVED: KRdp has no headless mode. KDE + MATE xrdp variants DROPPED — KDE's
+    #  GPU-assuming compositor is janky under llvmpipe + heaviest web-door churn; MATE added
+    #  nothing over XFCE. XFCE [default] + LXQt [lighter] are the fit-for-purpose picks.)
     strategy:
       fail-fast: false
       matrix:
         include:
           - { tag: xfce, file: Containerfile,      desktop_env: xfce, latest: "true" }
-          - { tag: mate, file: Containerfile,      desktop_env: mate }
           - { tag: lxqt, file: Containerfile,      desktop_env: lxqt }
-          - { tag: kde,  file: Containerfile,      desktop_env: kde  }
           - { tag: grd,  file: Containerfile.grd }
     steps:
       - name: Checkout

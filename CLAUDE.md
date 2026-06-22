@@ -61,7 +61,7 @@ applies the waiver label — that is correct, not a bug. Do NOT bundle it with f
 
 ## HEADLESS (binding prerequisite — EVERY variant, EVERY lineage)
 
-Every fedora-desktop image — the **xrdp** lineage (XFCE/MATE/LXQt/KDE) AND the
+Every fedora-desktop image — the **xrdp** lineage (XFCE/LXQt) AND the
 **grd** lineage (GNOME-Wayland / GRD), and any future lineage — MUST run
 **fully headless**: no physical monitor, no GPU, and no local login seat is ever attached or
 required for it to work. The desktop session is always a *virtual* display rendered by software
@@ -77,7 +77,7 @@ Principle 9 that the image comes up + serves every access path with no display/s
 |---|---|---|
 | 1 | BASE | Build only from the official `registry.fedoraproject.org/fedora:${FEDORA_VERSION}` image. Version is a Containerfile `ARG` — never inlined. |
 | 2 | SOURCES | Every package/artifact from an official source, exactly one of: (a) Fedora's own repos via dnf; (b) the vendor's/developer's own RPM or dnf repo (`.repo` with `gpgcheck=1`); (c) an **official-upstream binary release artifact with NO class-(a)/(b) source** — bounded by the **Class-(c) rules** below (last-resort/zero-base; publisher GPG-signature-or-checksum-verified, fail-closed; one of three self-contained consumption shapes; never loose on `$PATH`; disclosed per-artifact). Never: COPR or other third-party repos, pip/npm/cargo/gem/brew installs, curl-pipe-sh, tarball-on-PATH, flatpak, snap. **Applies to BOTH the base image AND claudebox's `additional_packages`.** Anything outside (a)/(b)/(c)-as-scoped needs an explicit Arthur waiver row. **Class-(c) artifacts in use: `guacamole.war` + `guacamole-auth-ban` + `guacamole-auth-jdbc` + `guacamole-auth-totp` (all four Apache, the same pinned key `GUAC_GPG_FP`, GPG-verified), Obsidian.** |
-| 3 | MINIMAL | dnf only with `--setopt=install_weak_deps=False`. Every package gets a justifying row in the relevant Packages table (BASE or BOX); a package without a row is a violation. **Install the most specific (leaf) package, never a convenience metapackage.** `install_weak_deps=False` blocks weak Recommends but NOT a metapackage's hard Requires — a metapackage silently pulls unused components (e.g. `fail2ban` hard-pulls `fail2ban-firewalld`→`firewalld` + `fail2ban-sendmail`→`esmtp`; we install `fail2ban-server`). If unsure whether a name is a metapackage, verify (`dnf repoquery --requires <pkg>`) and flag before adding. **"MINIMUM" IS RELATIVE TO THE CHOSEN CAPABILITY, not the absolute package count.** Once a capability is decided (a working GNOME-shell desktop; an RDP-grade web gate), install the minimal LEAF footprint that makes THAT capability work, and accept + DISCLOSE the irreducible hard-dependency closure it entails (e.g. `gnome-shell`→webkit + `gnome-control-center`; KDE→samba/codec). Between options that deliver the SAME capability, prefer the smaller-footprint / built-in / class-(a) one. A lighter option that REDUCES the capability is NOT "more minimal" — it is a lesser function, and choosing it is a recorded capability trade-off, NOT a minimalism win. (Worked decision: Apache Guacamole is the SOLE web gate. noVNC [VNC-grade] was REMOVED fleet-wide — the web door is a PUBLIC, non-tailnet door and noVNC's 8-char VncAuth is unacceptable there (see Principle 7); Guacamole [RDP-grade — H.264/audio/clipboard/file-transfer in the browser, strong password + auth-ban lockout + TLS] is the chosen capability, so its Tomcat + JVM + `.war` footprint IS the minimum for full strongly-authed RDP-in-the-browser. The same "minimum relative to capability" rule explains the disclosed `gnome-shell`→webkit / KDE→samba hard-dependency closures: once the DE capability is chosen, that closure is its irreducible minimum, not bloat.) |
+| 3 | MINIMAL | dnf only with `--setopt=install_weak_deps=False`. Every package gets a justifying row in the relevant Packages table (BASE or BOX); a package without a row is a violation. **Install the most specific (leaf) package, never a convenience metapackage.** `install_weak_deps=False` blocks weak Recommends but NOT a metapackage's hard Requires — a metapackage silently pulls unused components (e.g. `fail2ban` hard-pulls `fail2ban-firewalld`→`firewalld` + `fail2ban-sendmail`→`esmtp`; we install `fail2ban-server`). If unsure whether a name is a metapackage, verify (`dnf repoquery --requires <pkg>`) and flag before adding. **"MINIMUM" IS RELATIVE TO THE CHOSEN CAPABILITY, not the absolute package count.** Once a capability is decided (a working GNOME-shell desktop; an RDP-grade web gate), install the minimal LEAF footprint that makes THAT capability work, and accept + DISCLOSE the irreducible hard-dependency closure it entails (e.g. `gnome-shell`→webkit + `gnome-control-center`). Between options that deliver the SAME capability, prefer the smaller-footprint / built-in / class-(a) one. A lighter option that REDUCES the capability is NOT "more minimal" — it is a lesser function, and choosing it is a recorded capability trade-off, NOT a minimalism win. (Worked decision: Apache Guacamole is the SOLE web gate. noVNC [VNC-grade] was REMOVED fleet-wide — the web door is a PUBLIC, non-tailnet door and noVNC's 8-char VncAuth is unacceptable there (see Principle 7); Guacamole [RDP-grade — H.264/audio/clipboard/file-transfer in the browser, strong password + auth-ban lockout + TLS] is the chosen capability, so its Tomcat + JVM + `.war` footprint IS the minimum for full strongly-authed RDP-in-the-browser. The same "minimum relative to capability" rule explains the disclosed `gnome-shell`→webkit hard-dependency closure (grd): once the DE capability is chosen, that closure is its irreducible minimum, not bloat.) |
 | 4 | VERIFY FIRST | Before adopting or bumping any source/version, fact-check it against the live source (web). Gate risky installs (version-mismatched vendor RPMs, new repos, a new Obsidian/Guacamole/jeemig release) in a scratch container before editing build files. |
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. Container user is the generic `core` (uid 1000). Credentials enter only as runtime env vars — `RDP_PW` (always) + `GUAC_PW` (always; the public Guacamole web door), with `RFB_PW` (OPTIONAL; arms the tailnet-only :5900 native-VNC mirror) + `TS_AUTHKEY` optional — and the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache Guacamole `.war` version is a Containerfile `ARG` (`GUAC_VERSION`) + its release-signing-key fingerprint (`GUAC_GPG_FP`) — bump together, after rule 4. The `guacamole-auth-ban`, `guacamole-auth-jdbc` and `guacamole-auth-totp` extensions RIDE the same `GUAC_VERSION`/`GUAC_GPG_FP` (one Apache release, one key — bump all together). (rclone + jakartaee-migration + MariaDB/`mariadb-java-client` are Fedora class-(a) packages — no version pin.) Obsidian is intentionally latest-at-build (resolved from the developer's releases API) with its sha256 logged into the build output. |
@@ -214,16 +214,16 @@ fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` 
 | guacamole-auth-totp | Apache `.tar.gz` (`GUAC_VERSION`) → `.jar` extension | c | TOTP / Google-Authenticator 2FA on the public :8443 door — QR shown at first login, seed stored in the DB. No class-(a)/(b) source. **GPG-verified** against the SAME pinned Apache key (`GUAC_GPG_FP`), identical pattern; `.jar` into `/etc/guacamole/extensions/`. A class-(c) artifact |
 
 **Desktop-variant note (the `DESKTOP_ENV` xrdp family).** The XFCE rows above
-(`xfce4-session`…`xfce4-settings`) are the default/base DE leaf set. The `mate`/`lxqt`/`kde`
-variants REPLACE exactly that block with their own minimal leaf set, enumerated in
-`install.sh`'s `DESKTOP_ENV` case (the single source of truth for per-variant packages — they
-are "tabled by reference" there per Principle 3). Two expectations to record so a future
-auditor doesn't misread them: (1) the **KDE** variant is intentionally ~750 MiB larger (4.4 vs
-3.65 GB) — Plasma's genuine hard-Requires closure (kio-extras→samba libs,
-ktexteditor→qtspeech→flite, ffmpeg→codec2), NOT a metapackage/@group violation; (2) **polkit
-privilege-escalation dialogs are non-functional by design** across all variants (the
-no-systemd harness supervises no system D-Bus / `polkitd`) — fine for a vault/wiki + dev
-workstation that does no interactive system administration.
+(`xfce4-session`…`xfce4-settings`) are the default/base DE leaf set. The `lxqt`
+variant REPLACES exactly that block with its own minimal leaf set, enumerated in
+`install.sh`'s `DESKTOP_ENV` case (the single source of truth for per-variant packages —
+"tabled by reference" there per Principle 3). Note: **polkit privilege-escalation dialogs
+are non-functional by design** in both variants (the no-systemd harness supervises no system
+D-Bus / `polkitd`) — fine for a vault/wiki + dev workstation that does no interactive system
+administration. (**Only XFCE [default] + LXQt [lighter] remain.** KDE was dropped — its KWin
+compositor assumes a GPU and is janky under llvmpipe, it is the most screen-churn over the
+low-bandwidth web door, and it is polkit-degraded, all for Plasma richness the self-contained
+app set doesn't use. MATE was dropped too — it added nothing over XFCE for this purpose.)
 
 ## THE TWO LINEAGES — one repo, two init/desktop contracts
 
@@ -246,7 +246,7 @@ WRONG TOOL for a headless RDP door, not merely unproven. (An earlier draft of th
 
 | Lineage (file) | Init | Desktop | RDP server | VNC server | size | Validation |
 |---|---|---|---|---|---|---|
-| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/MATE/LXQt/KDE on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | 3.65–4.4 GB | full (build→run→probe) — **the proven, production lineage** |
+| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/LXQt on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | ~3.65 GB (XFCE) | full (build→run→probe) — **the proven, production lineage** |
 | **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
 
 **Disclosed hard-dep closure (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**
