@@ -66,9 +66,9 @@ echo "core:${RDP_PW}" | chpasswd
 if [ ! -e /home/core/.bashrc ]; then
     cp -rT /etc/skel /home/core
 fi
-# Desktop session needs .Xclients for xrdp. Use the variant's baked session cmd
-# (/etc/fedora-desktop/xsession, set per DESKTOP_ENV at build) so a fresh home
-# volume launches the RIGHT desktop (XFCE/MATE/LXQt/KDE), not always XFCE.
+# Desktop session needs .Xclients for xrdp. Use the baked session cmd
+# (/etc/fedora-desktop/xsession, set at build) so a fresh home volume launches the
+# baked desktop (XFCE — the sole xrdp variant) via its startxfce4 entry.
 if [ ! -e /home/core/.Xclients ]; then
     printf '%s\n' "$(cat /etc/fedora-desktop/xsession 2>/dev/null || echo startxfce4)" > /home/core/.Xclients
     chmod +x /home/core/.Xclients
