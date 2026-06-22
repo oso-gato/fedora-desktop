@@ -41,11 +41,10 @@ RDP_PW="$(ask_secret "core's RDP/system password (STRONG)")"
 GUAC_PW="$(ask_secret "core's Guacamole WEB password (STRONG; the only public door)")"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
 
-FLEET_SSH=""
-if [ "$(ask 'Show the Dev/VPS fleet SSH tiles on the web door? (y/n)' y)" = y ]; then
-  FLEET_SSH="$(ask 'Fleet targets ("label host port user"; ";"-separated)' \
-    'dev fedora-dev 22 core;vps fedora-bootstrap 22 core')"
-fi
+# core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the
+# core level. FLEET_SSH just DEFINES where the fleet targets live (env-overridable for
+# non-standard hostnames); WHICH additional users ALSO get them is asked per-user below.
+FLEET_SSH="${FLEET_SSH:-dev fedora-dev 22 core;vps fedora-bootstrap 22 core}"
 TS_AUTHKEY="$(ask 'Tailscale auth key (blank = interactive join later)' '')"
 
 # --- how many additional users, then per-user name / password / fleet access ---
@@ -69,7 +68,7 @@ while [ "$i" -lt "$N" ]; do
   p="$(ask_secret "  password for '$u'")"
   a=""
   while :; do
-    a="$(ask "  fleet access for '$u' (none|dev|host|both)" none)"
+    a="$(ask "  Show the Dev/VPS fleet SSH tiles for '$u'? (none|dev|host|both)" none)"
     case "$a" in none|dev|host|both) break ;; *) echo "    pick: none | dev | host | both" >&2 ;; esac
   done
   export "USER${i}_NAME=$u" "USER${i}_PW=$p" "USER${i}_ACCESS=$a"
