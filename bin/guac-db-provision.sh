@@ -151,11 +151,17 @@ guac_db_provision() {
     DB_PW="$(cat "$DB_PW_FILE")"   # alphanumeric only (tr stripped /+=) -> safe to interpolate
 
     # DB + loopback user + schema. MUST-DO #1: load ONLY 001 (schema); NEVER 002.
+    # The app user is @'127.0.0.1', NOT @'localhost'. Guacamole's JDBC connects over TCP to
+    # mysql-hostname=127.0.0.1, and we run with skip-name-resolve, so MariaDB sees the
+    # connecting host as the literal '127.0.0.1' — a @'localhost' grant (which MySQL/MariaDB
+    # treats as SOCKET-only) does NOT match it -> "Access denied for 'guacamole'@'127.0.0.1'"
+    # -> Guacamole's login throws -> the web UI shows "An error has occurred". (The root
+    # provisioning here still uses the unix socket = root@localhost, which is unaffected.)
     MYSQL_ROOT <<SQL
 CREATE DATABASE IF NOT EXISTS guacamole_db CHARACTER SET utf8 COLLATE utf8_general_ci;
-CREATE USER IF NOT EXISTS 'guacamole'@'localhost' IDENTIFIED BY '${DB_PW}';
-ALTER USER 'guacamole'@'localhost' IDENTIFIED BY '${DB_PW}';
-GRANT SELECT,INSERT,UPDATE,DELETE ON guacamole_db.* TO 'guacamole'@'localhost';
+CREATE USER IF NOT EXISTS 'guacamole'@'127.0.0.1' IDENTIFIED BY '${DB_PW}';
+ALTER USER 'guacamole'@'127.0.0.1' IDENTIFIED BY '${DB_PW}';
+GRANT SELECT,INSERT,UPDATE,DELETE ON guacamole_db.* TO 'guacamole'@'127.0.0.1';
 FLUSH PRIVILEGES;
 SQL
     local _have
