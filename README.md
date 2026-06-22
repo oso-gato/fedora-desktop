@@ -176,6 +176,18 @@ maintainer asks the host (`fedora-bootstrap`) claudebox to spin up fedora-deskto
 claudebox **MUST ask the operator for** the following (never hardcode, never invent), then deploy
 with them via `run.sh` / the Quadlet:
 
+> ### ⚠️ Running BOTH lineages on one host → set a DISTINCT `WEB_PORT` per container
+> `xrdp` (`run.sh`) and `grd` (`run.sh.grd`) **both default the public web door to host `:8443`**, so
+> spinning up both at the default **collides on `:8443`**. The web port is the **only** published port
+> (everything else is tailnet-only), so it is the **only** conflict — and container names
+> (`fedora-desktop` vs `fedora-desktop-grd`), volumes (`fedora-desktop-*` vs `fedora-desktop-grd-*`),
+> and tailnet hostnames are already distinct. **Fix: give each a different `WEB_PORT`:**
+> ```sh
+> RDP_PW=… GUAC_PW=… WEB_PORT=8443 ./run.sh        # xrdp/XFCE  → https://<host>:8443
+> RDP_PW=… GUAC_PW=… WEB_PORT=8444 ./run.sh.grd    # grd        → https://<host>:8444
+> ```
+> The host claudebox MUST set distinct `WEB_PORT`s whenever it spins up more than one lineage/container.
+
 1. **Lineage + variant** — `xrdp` (proven; **XFCE-only**, `DESKTOP_ENV=xfce`) is the deployable
    default; `grd` is **EXPERIMENTAL** (Wayland headless host-validation pending).
    (`krdp` was REMOVED — KRdp has no headless mode. The `kde`/`mate`/`lxqt` xrdp variants were
@@ -189,6 +201,8 @@ with them via `run.sh` / the Quadlet:
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
    web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
    non-tailnet door demands strong auth and noVNC's 8-char VncAuth is unacceptable there).
+   **Deploying both lineages on one host? Each container needs its OWN `WEB_PORT` — they both
+   default to 8443 and will collide (see the ⚠️ callout above).**
 3. **Secrets, per door** — `./spin-up.sh` offers to **generate a diceware passphrase** (6 EFF words
    ≈ 77 bits, wallet-seed style, shown once to save) for each, or accepts your own with a **≥20-char
    floor**. The public door is further backed by `guacamole-auth-ban` tightened to **3 attempts → 15-min
