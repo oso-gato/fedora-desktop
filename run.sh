@@ -88,14 +88,14 @@ WEB_PORT="${WEB_PORT:-8443}"
 # exported, so never in PID 1's environ) and unsets them after use — parity with
 # the grd lineages, which already moved off `-e`.
 SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
-{ printf 'RDP_PW=%s\n' "$RDP_PW"
-  [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
-  [ -n "$RFB_PW" ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
-  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"
-  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%s\n'  "$FLEET_SSH"
+{ printf 'RDP_PW=%q\n' "$RDP_PW"
+  [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"
+  [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
+  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%q\n' "$TS_AUTHKEY"
+  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%q\n'  "$FLEET_SSH"
   for _i in 1 2 3 4 5; do
     eval "_un=\${USER${_i}_NAME:-}; _up=\${USER${_i}_PW:-}; _ua=\${USER${_i}_ACCESS:-none}"
-    [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%s\nUSER%s_PW=%s\nUSER%s_ACCESS=%s\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
+    [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%q\nUSER%s_PW=%q\nUSER%s_ACCESS=%q\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
   done; } > "$SECRETS"
 
 podman run -d --name fedora-desktop \

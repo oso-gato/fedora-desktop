@@ -38,10 +38,10 @@ TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; WEB_PORT="${WEB_PORT:-8443}"
 # Secrets reach the first-boot oneshot via a bind-mounted EnvironmentFile (the
 # fedora-desktop-grd-firstboot.service reads /etc/fedora-desktop/secrets.env).
 SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
-{ printf 'RDP_PW=%s\n' "$RDP_PW"
-  [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%s\n' "$GUAC_PW"
-  [ -n "$RFB_PW" ]     && printf 'RFB_PW=%s\n'  "$RFB_PW"
-  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"; } > "$SECRETS"
+{ printf 'RDP_PW=%q\n' "$RDP_PW"
+  [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"
+  [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
+  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%q\n' "$TS_AUTHKEY"; } > "$SECRETS"
 
 podman run -d --name fedora-desktop-grd \
     --hostname fedora-desktop-grd \
