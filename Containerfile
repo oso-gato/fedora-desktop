@@ -85,7 +85,9 @@ COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 #   /home/core         — home volume (vault working copy, tokens, box state, OAuth)
 #   /var/lib/tailscale — tailnet identity + ssh host keys
 #   /var/lib/guac-cert — the minted Guacamole TLS keystore (persists across recreates)
-VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert"]
+#   /var/lib/mysql     — the MariaDB datadir: ALL web logins + TOTP enrollment seeds.
+#                        Losing it = losing every enrollment (back it up; see README).
+VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
 # EXPOSE is metadata only; the authoritative published ports live in run.sh /
 # fedora-desktop.container (PublishPort). The ONLY public-internet doors are the

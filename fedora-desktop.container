@@ -79,6 +79,9 @@ SecurityLabelDisable=true
 Volume=fedora-desktop-home:/home/core
 Volume=fedora-desktop-state:/var/lib/tailscale
 Volume=fedora-desktop-cert:/var/lib/guac-cert
+# The MariaDB datadir — ALL web logins + TOTP enrollment seeds. Losing it = losing every
+# enrollment (back it up; see README). 3306 is NEVER published (loopback-only).
+Volume=fedora-desktop-db:/var/lib/mysql
 # Multi-user (optional): up to 5 additional users. Each needs its OWN persisted home
 # volume bound at its home path — else the user's vault/state/running session lives on
 # the ephemeral layer and is lost on recreation. UNCOMMENT one per provisioned user
@@ -122,7 +125,7 @@ PublishPort=8443:8443
 # Health = the Guacamole web page returns 200 over TLS. This proves Tomcat +
 # guacd + the webapp are all serving, which is the only public desktop door.
 # Must match run.sh's --health-cmd. curl + bash are present in the base image.
-HealthCmd=bash -c "[ $(curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:8443/guacamole/) = 200 ]"
+HealthCmd=bash -c "[ $(curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:8443/guacamole/) = 200 ] && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping"
 HealthInterval=30s
 HealthTimeout=5s
 HealthRetries=3
