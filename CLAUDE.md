@@ -62,7 +62,7 @@ applies the waiver label — that is correct, not a bug. Do NOT bundle it with f
 ## HEADLESS (binding prerequisite — EVERY variant, EVERY lineage)
 
 Every fedora-desktop image — the **xrdp** lineage (XFCE/MATE/LXQt/KDE) AND the
-**grd** lineage (GNOME-Wayland / GRD), and any future lineage (e.g. KDE-Wayland/KRdp) — MUST run
+**grd** lineage (GNOME-Wayland / GRD), and any future lineage — MUST run
 **fully headless**: no physical monitor, no GPU, and no local login seat is ever attached or
 required for it to work. The desktop session is always a *virtual* display rendered by software
 GL (`mesa-dri-drivers` llvmpipe): the xrdp lineage uses `xorgxrdp`'s headless Xorg server; the
@@ -172,7 +172,7 @@ fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` 
 | tomcat | Fedora current | a | servlet container serving the `guacamole.war` webapp (+ the `guacamole-auth-ban` extension) on TLS :8443 |
 | tomcat-jakartaee-migration | Fedora current | a | Fedora's jakartaee-migration (`javax2jakarta`) — converts the upstream `guacamole.war` javax→jakarta for Tomcat 10.1 at build (class-a, replaces the old curl'd shaded jar) |
 | gnupg2 | Fedora current | a | the `gpg` CLI used at build to verify the `guacamole.war` + `guacamole-auth-ban` + `guacamole-auth-jdbc` + `guacamole-auth-totp` signatures against the pinned Apache key |
-| mariadb-server | Fedora current | a | the database the public web door authenticates against (Guacamole JDBC auth) — TOTP 2FA REQUIRES a DB (file-auth cannot store the per-user enrollment seed). Bound to **127.0.0.1 ONLY** (Principle 7: 3306 is NEVER published). The **leaf** daemon pkg (hard-Requires only mariadb/mariadb-common/mariadb-errmsg/coreutils/iproute/which + the systemd shared-lib — same RPM-level systemd dep as sshd/fail2ban, NOT systemd-as-PID-1; runs under the supervised-bash watchdog on xrdp, as `mariadb.service` on grd/krdp). `mysql-selinux` is a conditional dep on selinux-policy-targeted, absent here |
+| mariadb-server | Fedora current | a | the database the public web door authenticates against (Guacamole JDBC auth) — TOTP 2FA REQUIRES a DB (file-auth cannot store the per-user enrollment seed). Bound to **127.0.0.1 ONLY** (Principle 7: 3306 is NEVER published). The **leaf** daemon pkg (hard-Requires only mariadb/mariadb-common/mariadb-errmsg/coreutils/iproute/which + the systemd shared-lib — same RPM-level systemd dep as sshd/fail2ban, NOT systemd-as-PID-1; runs under the supervised-bash watchdog on xrdp, as `mariadb.service` on grd). `mysql-selinux` is a conditional dep on selinux-policy-targeted, absent here |
 | mariadb | Fedora current | a | the MariaDB client CLI (`mariadb`/`mariadb-admin`) — schema load (`001`), readiness ping, and the entrypoint's idempotent DB provisioning |
 | mariadb-java-client | Fedora current | a | the JDBC driver Guacamole loads from `$GUACAMOLE_HOME/lib` (`/etc/guacamole/lib`) to reach MariaDB; rpm-owned jar at `/usr/lib/java/mariadb-java-client.jar` (class-a, replaces any Maven-Central download) |
 | xfce4-session | Fedora current | a | XFCE session manager (`startxfce4` entry point) |
@@ -225,63 +225,64 @@ privilege-escalation dialogs are non-functional by design** across all variants 
 no-systemd harness supervises no system D-Bus / `polkitd`) — fine for a vault/wiki + dev
 workstation that does no interactive system administration.
 
-## THE THREE LINEAGES — one repo, three init/desktop contracts
+## THE TWO LINEAGES — one repo, two init/desktop contracts
 
-fedora-desktop ships **three lineages** in this one repo. They share the harness (PART A), the
+fedora-desktop ships **two lineages** in this one repo. They share the harness (PART A), the
 app set, the policy, Principle 2(c), AND the **same SOLE web gate — Apache Guacamole on :8443** —
-only the DESKTOP + the INIT contract + the NATIVE remote servers differ. Every lineage exposes a
+only the DESKTOP + the INIT contract + the NATIVE remote servers differ. Each lineage exposes a
 loopback **RDP :3389** (native server) AND a loopback **VNC :5900** (native server, the optional
 tailnet-only mirror); Guacamole fronts the RDP as the SOLE public :8443 door (RDP-grade browser:
-audio/clipboard/file-transfer; strong `GUAC_PW` + the `guacamole-auth-ban` lockout + TLS; the
-`guacamole.war` + `guacamole-auth-ban` are the class-(c) artifacts). noVNC was removed fleet-wide
+audio/clipboard/file-transfer; strong `GUAC_PW` + TOTP 2FA + the `guacamole-auth-ban` lockout + TLS;
+`guacamole.war`/`-auth-ban`/`-jdbc`/`-totp` are the class-(c) artifacts). noVNC was removed fleet-wide
 (the public, non-tailnet door needs strong auth — noVNC's 8-char VncAuth is unacceptable).
+
+**krdp (KDE Plasma-Wayland / KRdp) was REMOVED.** The public door is Guacamole-**over-RDP** on every
+lineage, and **KRdp has no headless mode** — "KRdp does not support headless sessions and there are
+no immediate plans to do so" (KDE/krdp README, L1); the `--virtual-monitor` capability exists only
+for krfb (the VNC server), NOT for the RDP server the web door consumes. So on KDE-Wayland the one
+server feeding the public door is the one that cannot get a headless virtual display — it is the
+WRONG TOOL for a headless RDP door, not merely unproven. (An earlier draft of this file proposed a
+`krdpserver --virtual-monitor` fix; that flag/capability does not exist — the claim was wrong.)
 
 | Lineage (file) | Init | Desktop | RDP server | VNC server | size | Validation |
 |---|---|---|---|---|---|---|
-| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/MATE/LXQt/KDE on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | 3.65–4.4 GB | full (build→run→probe) |
+| **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE/MATE/LXQt/KDE on **X11** (`DESKTOP_ENV`) | xrdp | `x0vncserver` (TigerVNC) | 3.65–4.4 GB | full (build→run→probe) — **the proven, production lineage** |
 | **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
-| **krdp** (`Containerfile.krdp`) | **systemd-PID-1** | Plasma-6 **Wayland** / KRdp+krfb | KRdp (`krdpserver`) | krfb (`krfb-virtualmonitor`, libvncserver) | 4.31 GB | assembly-validated; runtime **EXPERIMENTAL — headless KDE-Wayland UNPROVEN** |
 
-**Disclosed hard-dep closures (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**
+**Disclosed hard-dep closure (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**
 - **grd:** `gnome-shell` hard-pulls `webkitgtk6.0` + `webkit2gtk4.1` (~182 MiB: captive-portal
   helper + evolution-data-server) + `gnome-control-center`.
-- **krdp:** `plasma-desktop` → `kio-extras` → `samba-*` libs (smb:// support, ~4 pkgs) + the
-  `kf6-*` framework set. Verified clean of accidental bloat (NO sddm, NO Xorg server, NO
-  ffmpeg/kernel/grub) via a build-time closure dry-run. The GTK/Electron app-runtime libs the
-  xrdp lineage installs as explicit leaves (`gtk3`/`nss`/`atk`/`cups-libs`/`alsa-lib`/`libnotify`/
-  `xdg-utils`/`adwaita-icon-theme`/`dbus`) ride in TRANSITIVELY through the Plasma closure; the two
-  that do NOT — `libsecret` (Secret Service client for 1Password/VS Code; `kf6-kwallet` is the
-  provider) and `pipewire-pulseaudio` (the `ENABLE_AUDIO` Pulse shim) — are installed explicitly.
-- Both grd+krdp native VNC servers are **libvncserver-backed (Tight+JPEG, ZRLE)** — the optional
-  tailnet :5900 native-VNC mirror is bandwidth-comparable to the xrdp/TigerVNC path (libvncserver's
-  Tight is somewhat less finely tuned than TigerVNC's — a disclosed, order-of-magnitude-equal
-  difference). The public :8443 door is Guacamole-over-RDP on every lineage.
+- grd's native VNC server is **libvncserver-backed (Tight+JPEG, ZRLE)** — the optional tailnet :5900
+  native-VNC mirror is bandwidth-comparable to the xrdp/TigerVNC path (libvncserver's Tight is
+  somewhat less finely tuned than TigerVNC's — a disclosed, order-of-magnitude-equal difference).
+  The public :8443 door is Guacamole-over-RDP on both lineages.
 
-**systemd-PID-1 = STOP-AND-SURFACE.** The grd + krdp lineages require the HOST to grant cgroup-v2
-delegation + a writable `/sys/fs/cgroup` — a wider host-trust ask than the xrdp lineage. They
-deploy ONLY via `run.sh.grd` / `run.sh.krdp` (`--systemd=always --cgroupns=host`), NEVER the xrdp
-`run.sh`. They CANNOT boot in the nested build engine, so local validation is **assembly-only**
-(`podman create` + `podman export | tar -t` + marker/content inspection); the session + the
-native servers (GNOME/Plasma Wayland under `kwin_wayland --virtual` / `mutter --headless`, KRdp/
-krfb/GRD under core's `systemd --user`) are **host-validated** on a delegating host.
+**systemd-PID-1 = STOP-AND-SURFACE (grd only).** The grd lineage requires the HOST to grant cgroup-v2
+delegation + a writable `/sys/fs/cgroup` — a wider host-trust ask than the xrdp lineage. It deploys
+ONLY via `run.sh.grd` (`--systemd=always --cgroupns=host`), NEVER the xrdp `run.sh`. It CANNOT boot
+in the nested build engine, so local validation is **assembly-only** (`podman create` +
+`podman export | tar -t` + marker/content inspection); the session + the native servers
+(GNOME-Wayland under `mutter --headless`, GRD under core's `systemd --user`) are **host-validated**
+on a delegating host.
 
-**BOTH grd AND krdp are EXPERIMENTAL — neither is ship-ready; xrdp is the only proven path.**
-(An earlier draft wrongly called grd "canonical" — corrected against L1.) GNOME Remote Desktop has
-TWO headless modes: (a) `grdctl --headless` + `gnome-remote-desktop-headless.service` = the
-single-user *Desktop Sharing* path, which connects to an **already-running** "independently set up
-headless graphical user session" (it does NOT spawn one); (b) `grdctl --system` + GDM = *Remote
-Login*, the SYSTEM service whose GDM `CreateRemoteDisplay` genuinely spawns a fresh headless
-`mutter` on connect. **grd uses mode (a) but ships NO gdm, starts no `mutter`/`gnome-session`, and
-never even enables `gnome-remote-desktop-headless.service`** — so on connect there is no compositor
-behind the loopback RDP/VNC: a black/refused desktop, while the guacamole healthcheck still reports
-200 off Tomcat's page. This is the **same** un-wired-session gap krdp had — in fact krdp is *more*
-complete (it at least wires `plasma-headless.service`, though that path hits KDE Bug 500017 and
-should switch to `krdpserver --virtual-monitor`). To make grd real, pick ONE: convert to the
-turnkey `--system`+GDM Remote Login mode (add gdm, `grdctl --system`, enable
-`gnome-remote-desktop.service`), OR keep `--headless` and ALSO wire a `gnome-session`/`mutter
---headless` unit + enable `gnome-remote-desktop-headless.service` (the krdp-style fix). Until either
-is **host-validated on a delegating host, both Wayland lineages are EXPERIMENTAL** — deploy xrdp
-(X11) for production; grd/krdp are follow-up PRs gated on host validation.
+**grd is EXPERIMENTAL — not ship-ready; xrdp is the only proven path.** (An earlier draft wrongly
+called grd "canonical" — corrected against L1.) GNOME Remote Desktop has TWO headless modes:
+(a) `grdctl --headless` + `gnome-remote-desktop-headless.service` = the *Desktop Sharing* path, which
+connects to an **already-running** "independently set up headless graphical user session" (it does
+NOT spawn one); (b) `grdctl --system` + GDM = *Remote Login*, the SYSTEM service whose GDM
+`CreateRemoteDisplay` spawns a headless `mutter` on connect. **grd currently uses mode (a) but ships
+NO gdm, starts no `mutter`/`gnome-session`, and never enables `gnome-remote-desktop-headless.service`**
+— so on connect there is no compositor behind the loopback RDP/VNC: a black/refused desktop, while
+the guacamole healthcheck still reports 200 off Tomcat's page. **Corrected vs an earlier draft:
+GRD 47+ / GNOME-50 added PERSISTENT Remote Login** — a `--system` session survives disconnect and
+resumes "from where you left off", with multiple users reachable via GDM, so mode (b) is a legitimate
+modern multi-user persistent-resume path, NOT the fresh-session-per-connect it was on GNOME ≤46
+(L2 — verify against GNOME's own gnome-remote-desktop release notes before relying on it). To make grd
+real, pick ONE: convert to the turnkey `--system`+GDM Remote Login mode (add gdm, `grdctl --system`,
+enable `gnome-remote-desktop.service`), OR keep `--headless` and ALSO wire a `gnome-session`/`mutter
+--headless` unit + enable `gnome-remote-desktop-headless.service`. Until host-validated on a
+delegating host, grd is EXPERIMENTAL — deploy **xrdp (X11) for production**; grd is a follow-up gated
+on host validation.
 
 ## MULTI-USER (core admin + up to 5 additional users, per-user fleet access)
 
@@ -312,7 +313,7 @@ grants:** a `dev`/`host` tile reaches that box over the desktop's tailnet via ke
 Tailscale-SSH = a **`core` (admin) shell** there — so granting `dev`/`host` is an admin-level
 grant, NOT a sandboxed login (per-user identities on dev/host would need accounts provisioned
 there — a cross-repo follow-up). Each user's web password == their OS password (one credential;
-SSO) **plus their TOTP second factor**. (grd/krdp are single-user: core only.)
+SSO) **plus their TOTP second factor**. (grd is single-user: core only.)
 
 **CROSS-DEVICE PERSISTENT RESUME — the bpp=24 INVARIANT (binding).** Each user gets ONE
 xrdp session that survives disconnect (`KillDisconnected=false`) and RESUMES from any device.
@@ -398,10 +399,6 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD (RDP+VNC) + the Guacamole web door (guacd/Tomcat/.war + the GPG-verified guacamole-auth-ban extension). Enables sshd/rsyslog/fail2ban/tailscaled + the web units + the firstboot oneshot; sets core linger; bakes lineage=grd |
 | entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): core password, ssh-key sync, GRD TLS PEM, Guacamole web door via DB-auth+TOTP (waits on `mariadb.service`, sources the shared `guac-db-provision.sh`; `security=tls`, no bpp pin; core-only), `grdctl` rdp+vnc config (RDP=RDP_PW; VNC=RFB_PW arms the optional tailnet mirror). Session bringup is HOST-VALIDATED |
 | run.sh.grd | grd deploy contract (`--systemd=always --cgroupns=host -v /sys/fs/cgroup`); secrets RDP_PW+GUAC_PW (RFB_PW optional) + the `/guacamole/` health path; secrets via bind-mounted `/etc/fedora-desktop/secrets.env`. **CONTROL-PLANE** + STOP-AND-SURFACE (needs a cgroup-v2-delegating host) |
-| Containerfile.krdp | **krdp lineage** base image (KDE Plasma-Wayland / KRdp+krfb; ARGs as grd; runs install-krdp.sh; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
-| install-krdp.sh | krdp-lineage install: harness as systemd units + minimal Plasma-6 Wayland leaf set + KRdp (RDP) + krfb (VNC) + xdg-desktop-portal-kde + kpipewire + the Guacamole web door (guacd/Tomcat/.war + guacamole-auth-ban). Same enable/linger/marker pattern (lineage=krdp) |
-| entrypoint-krdp.sh | krdp first-boot oneshot: core password, ssh-key sync, KRdp TLS PEM, Guacamole web door via DB-auth+TOTP (waits on `mariadb.service`, sources the shared `guac-db-provision.sh`; `security=tls`, no bpp pin; core-only → KRdp loopback RDP), krdpserverrc + a systemd-`--user` ExecStart drop-in passing `--username core --password $RDP_PW` (bypasses KWallet), krfb-virtualmonitor staging. Session bringup HOST-VALIDATED |
-| run.sh.krdp | krdp deploy contract (systemd-PID-1, secrets RDP_PW+GUAC_PW with RFB_PW optional, mirrors run.sh.grd). **CONTROL-PLANE** + STOP-AND-SURFACE |
 | distrobox.ini | claudebox manifest: image pin, `pre_init_hook` drops Anthropic `latest`-channel `.repo`, `additional_packages` |
 | claudebox-init.sh | post-assemble host bridges (CONTAINER_HOST export + in-box `claudebox-rebuild` flag-writer) over the quote-safe `podman exec` channel |
 | claudebox-assemble.sh | first-boot + every-rebuild: `distrobox rm -f` → `distrobox assemble create` → first-enter retry → bridges + **policy stamp (managed-settings.json + policy/hooks/gate-push.sh into /etc/claude-code/)**. **CONTROL-PLANE (it stamps the guardrails)** |

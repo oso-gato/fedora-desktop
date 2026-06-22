@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # guac-db-provision.sh — SINGLE SOURCE OF TRUTH for fedora-desktop's Guacamole
 # DB-backed auth + TOTP provisioning. SOURCED (not exec'd) by ALL THREE lineage
-# entrypoints — xrdp (supervised-bash) and grd/krdp (systemd) — AFTER MariaDB is
+# entrypoints — xrdp (supervised-bash) and grd (systemd) — AFTER MariaDB is
 # reachable. Keeping it in one file is deliberate: the four TOTP/DB must-dos must
 # hold byte-identically across lineages and must never drift.
 #   #1  load ONLY 001 (NEVER the guacadmin/guacadmin 002 backdoor); delete any
@@ -23,10 +23,10 @@
 #   MYSQL_ROOT()       fn: OS-root -> DB-root client (e.g. `mariadb --socket=$DBSOCK`)
 #   GUAC_PW, RDP_PW    core's web-login password + core's RDP-connection password
 #   USER{1..5}_NAME/_PW/_ACCESS  optional extra users (xrdp multi-user; unset on
-#                                grd/krdp => core-only, handled gracefully)
+#                                grd => core-only, handled gracefully)
 #   FLEET_SSH          optional ';'-list "label host [port] [user]" (may be empty)
 #   RDP_DISABLE_AUDIO  1 = disable web-door audio (default), 0 = enable
-#   RDP_SECURITY       desktop RDP security mode: 'any' (xrdp) | 'tls' (grd/krdp)
+#   RDP_SECURITY       desktop RDP security mode: 'any' (xrdp) | 'tls' (grd)
 #   RDP_PIN_BPP        1 = pin color-depth 24 (xrdp cross-device resume) | 0 = no
 # Schema is stashed at $GUAC_SCHEMA_001 by install*.sh.
 GUAC_SCHEMA_001="${GUAC_SCHEMA_001:-/usr/local/share/guacamole-schema/001-create-schema.sql}"

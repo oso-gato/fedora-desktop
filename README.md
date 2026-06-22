@@ -62,7 +62,7 @@ Every fedora-desktop image runs **fully headless** — no monitor, GPU, or local
 ever needed for it to work. The desktop is a *virtual* display rendered in software (llvmpipe):
 the **xrdp** lineage via `xorgxrdp`'s headless Xorg server, the **grd** lineage via
 `mutter --headless` / GRD's headless session. This holds for every desktop environment and
-every lineage (incl. any future KDE-Wayland/KRdp variant); a variant that
+every lineage (incl. any future variant); a variant that
 requires a physical display is a defect, not an option.
 
 ## Build Principles (binding)
@@ -154,7 +154,7 @@ cloud is rclone-only.
 | guacamole-auth-ban | remote-access | c | brute-force lockout on the PUBLIC :8443 door — a second Apache Guacamole `.jar` extension (same `GUAC_VERSION`, same pinned key `GUAC_GPG_FP`, same fetch+GPG-verify+extract pattern) dropped into `/etc/guacamole/extensions/`. What makes a single strong `GUAC_PW` a defensible public door (a password with no lockout is brute-forceable). No rpm exists |
 | guacamole-auth-jdbc | remote-access | c | the MySQL JDBC auth backend — moves the public door to MariaDB so TOTP 2FA can store enrollment seeds. Third Apache `.jar` extension (same key/pattern). Only the `mysql/` jar is installed + only `001-create-schema.sql` is stashed; the `002` guacadmin backdoor is never shipped/loaded. No rpm exists |
 | guacamole-auth-totp | remote-access | c | TOTP / Google-Authenticator 2FA on the public door (QR at first login, seed in the DB). Fourth Apache `.jar` extension (same key/pattern). No rpm exists |
-| mariadb-server / mariadb / mariadb-java-client | remote-access | a | the DB the public door authenticates against (TOTP needs a DB), its client, and the JDBC driver Guacamole loads from `/etc/guacamole/lib`. Fedora **leaf** packages; the DB binds **127.0.0.1 only** (3306 never published) and runs under the supervised-bash watchdog (xrdp) or as `mariadb.service` (grd/krdp) |
+| mariadb-server / mariadb / mariadb-java-client | remote-access | a | the DB the public door authenticates against (TOTP needs a DB), its client, and the JDBC driver Guacamole loads from `/etc/guacamole/lib`. Fedora **leaf** packages; the DB binds **127.0.0.1 only** (3306 never published) and runs under the supervised-bash watchdog (xrdp) or as `mariadb.service` (grd) |
 | jakartaee-migration | (build tool) | c | Apache's own converter (pinned `JEEMIG_VERSION`) used at build time to make `guacamole.war` Tomcat-10-compatible; not installed into the image |
 
 ### Box packages
@@ -177,11 +177,12 @@ claudebox **MUST ask the operator for** the following (never hardcode, never inv
 with them via `run.sh` / the Quadlet:
 
 1. **Lineage + variant** — `xrdp` (proven; `DESKTOP_ENV` ∈ `xfce`/`mate`/`lxqt`/`kde`) is the
-   deployable default; `grd` / `krdp` are **EXPERIMENTAL** (Wayland headless host-validation pending).
-   CI now publishes **every** variant to GHCR — pull the tag you want:
-   `:xfce` (= `:latest`) · `:mate` · `:lxqt` · `:kde` (xrdp lineage) · `:grd` · `:krdp`
-   (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd/krdp images build + sign, but
-   their *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
+   deployable default; `grd` is **EXPERIMENTAL** (Wayland headless host-validation pending).
+   (`krdp` was REMOVED — KRdp has no headless mode, the wrong tool for a headless RDP door.)
+   CI publishes every variant to GHCR — pull the tag you want:
+   `:xfce` (= `:latest`) · `:mate` · `:lxqt` · `:kde` (xrdp lineage) · `:grd`
+   (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd image builds + signs, but
+   its *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
    web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
    non-tailnet door demands strong auth and noVNC's 8-char VncAuth is unacceptable there).

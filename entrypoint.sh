@@ -39,7 +39,7 @@ trap 'kill -TERM 0 2>/dev/null; exit 0' TERM INT
 # ---- secrets: sourced from the bind-mounted 0600 secrets.env (run.sh writes it,
 # NOT `podman -e`, so RDP_PW/GUAC_PW never land in PID 1's /proc/1/environ or
 # `podman inspect`). They become SHELL vars here (never exported), are consumed
-# below, then unset — parity with the grd/krdp lineages. (Back-compat: an old
+# below, then unset — parity with the grd lineages. (Back-compat: an old
 # `-e`-style invocation still works — the vars are already in the environ and this
 # source is simply skipped.)
 [ -r /etc/fedora-desktop/secrets.env ] && . /etc/fedora-desktop/secrets.env
@@ -236,7 +236,7 @@ echo "[db] MariaDB up on 127.0.0.1:3306 (loopback only)"
 # ---- provision Guacamole DB-auth + TOTP via the shared single-source helper -------
 # bin/guac-db-provision.sh (COPY'd to /usr/local/share/fedora-dev/bin/) is the ONE
 # place the four TOTP/DB must-dos live, byte-identical across all three lineages
-# (xrdp here; grd/krdp source the same file). xrdp specifics: RDP security 'any' + pin
+# (xrdp here; grd source the same file). xrdp specifics: RDP security 'any' + pin
 # 24bpp (the cross-device session-RESUME invariant). MYSQL_ROOT + DBSOCK were defined
 # during the MariaDB bring-up above; the helper generates the loopback DB_PW itself.
 RDP_SECURITY=any
