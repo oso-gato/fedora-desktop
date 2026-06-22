@@ -502,6 +502,14 @@ fi
 # theme and a SOLID desktop colour (no photographic wallpaper => smaller initial
 # dirty-region encode on connect). XFCE is GTK3, so it rides the already-installed GTK
 # stack (Firefox/Electron) — no second toolkit resident at runtime (vs LXQt's Qt6/KF6).
+# The XFCE PolicyKit agent (xfce-polkit — a hard-dep of xfce4-session, not directly chosen) is
+# DEAD in this lineage: the no-systemd xrdp harness runs no polkitd / system D-Bus, so it can
+# only autostart, fail to register an authentication agent, and pop an "XFCE PolicyKit Agent"
+# error dialog at every login. polkit privilege-escalation is non-functional BY DESIGN here
+# (see the desktop note above), so mask the dead autostart for ALL users.
+if [ -f /etc/xdg/autostart/xfce-polkit.desktop ]; then
+  printf 'Hidden=true\n' >> /etc/xdg/autostart/xfce-polkit.desktop
+fi
 XFCONF=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
 install -d -m 0755 "$XFCONF"
 cat > "$XFCONF/xfwm4.xml" <<'XML'
