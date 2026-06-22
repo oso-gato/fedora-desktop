@@ -148,22 +148,23 @@ jobs:
     # push/cron/dispatch paths building while still blocking on a FAILED guard.
     if: always() && (needs.control-plane-guard.result == 'success' || needs.control-plane-guard.result == 'skipped')
     runs-on: ubuntu-latest
-    # MATRIX — build + publish EVERY desktop/lineage variant. fail-fast:false so one
-    # variant failing NEVER blocks the others from publishing. xrdp is the PROVEN
-    # lineage (xfce = :latest); grd is EXPERIMENTAL (Wayland, systemd-PID-1):
-    # it ASSEMBLY-builds here on a real runner, but its RUNTIME (booting the
-    # session) is host-validation-only — a green build means "image published", NOT
-    # "boots". Published tags: :xfce :grd (+ :latest = xfce).
-    # (xrdp is XFCE-ONLY now. krdp REMOVED: KRdp has no headless mode. KDE/MATE/LXQt xrdp
-    #  variants DROPPED — KDE is GPU-assuming/janky under llvmpipe; MATE adds nothing over
-    #  XFCE; and "LXQt is lighter" INVERTS here — this image already keeps the GTK3 stack
-    #  resident for Firefox/Electron, so XFCE rides it while LXQt adds a net-new Qt6/KF6
-    #  (+ a Fedora-44 Mir/Wayland) runtime nothing else uses. XFCE is the fit pick.)
+    # MATRIX — build + publish each LINEAGE. fail-fast:false so one variant failing
+    # NEVER blocks the other from publishing. xrdp is the PROVEN lineage (:xrdp = :latest);
+    # grd is EXPERIMENTAL (Wayland, systemd-PID-1): it ASSEMBLY-builds here on a real
+    # runner, but its RUNTIME (booting the session) is host-validation-only — a green
+    # build means "image published", NOT "boots".
+    # Tags are LINEAGE names: :xrdp :grd (+ :latest = :xrdp). The xrdp lineage's DE is
+    # XFCE (DESKTOP_ENV=xfce) — its tag is the lineage name since it is the sole variant.
+    # (krdp REMOVED: KRdp has no headless mode. KDE/MATE/LXQt xrdp variants DROPPED — KDE is
+    #  GPU-assuming/janky under llvmpipe; MATE adds nothing over XFCE; and "LXQt is lighter"
+    #  INVERTS here — this image already keeps the GTK3 stack resident for Firefox/Electron,
+    #  so XFCE rides it while LXQt adds a net-new Qt6/KF6 (+ a Fedora-44 Mir/Wayland) runtime
+    #  nothing else uses. XFCE is the fit pick.)
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { tag: xfce, file: Containerfile,      desktop_env: xfce, latest: "true" }
+          - { tag: xrdp, file: Containerfile,      desktop_env: xfce, latest: "true" }
           - { tag: grd,  file: Containerfile.grd }
     steps:
       - name: Checkout
