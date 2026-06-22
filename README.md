@@ -175,6 +175,10 @@ with them via `run.sh` / the Quadlet:
 
 1. **Lineage + variant** — `xrdp` (proven; `DESKTOP_ENV` ∈ `xfce`/`mate`/`lxqt`/`kde`) is the
    deployable default; `grd` / `krdp` are **EXPERIMENTAL** (Wayland headless host-validation pending).
+   CI now publishes **every** variant to GHCR — pull the tag you want:
+   `:xfce` (= `:latest`) · `:mate` · `:lxqt` · `:kde` (xrdp lineage) · `:grd` · `:krdp`
+   (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd/krdp images build + sign, but
+   their *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
    web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
    non-tailnet door demands strong auth and noVNC's 8-char VncAuth is unacceptable there).
