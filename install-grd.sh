@@ -136,9 +136,11 @@ sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http
 # ---- guacamole-auth-ban: brute-force lockout on the PUBLIC :8443 door --------
 # A SECOND class-(c) Apache Guacamole artifact (same pinned key), GPG-verified
 # fail-closed: bans a source IP after repeated failed logins. Backend-INDEPENDENT
-# (in-memory) — works with the file user-mapping, NO database. GUACAMOLE_HOME is
-# /etc/guacamole (JAVA_OPTS in entrypoint), so the extension JAR lives in
-# /etc/guacamole/extensions/. This is what makes a single strong GUAC_PW a
+# (in-memory) — bans a source IP after repeated failed logins. GUACAMOLE_HOME is set
+# to /etc/guacamole on grd's stock tomcat.service via the tomcat.service.d drop-in
+# below (NOT JAVA_OPTS — that's the xrdp entrypoint's path), so the extension JARs in
+# /etc/guacamole/extensions/ + guacamole.properties actually load. This is what makes
+# a single strong GUAC_PW a
 # defensible PUBLIC door (a password alone, with no lockout, is brute-forceable).
 curl -fsSL -o /tmp/guac-ban.tgz \
     "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-auth-ban-${GUAC_VERSION}.tar.gz"
@@ -215,6 +217,13 @@ After=mariadb.service fedora-desktop-grd-firstboot.service
 # Requires the firstboot oneshot too: a FAILED provisioning (e.g. the guacadmin
 # fail-closed exit 1) must BLOCK Tomcat from serving :8443. After= alone would not.
 Requires=mariadb.service fedora-desktop-grd-firstboot.service
+[Service]
+# Point Guacamole at /etc/guacamole. The xrdp lineage sets this via JAVA_OPTS on its
+# manual Tomcat launch (entrypoint.sh); grd uses the stock systemd tomcat.service, which
+# otherwise defaults GUACAMOLE_HOME to the tomcat user's ~/.guacamole -> Guacamole loads
+# NO extensions (jdbc/totp/auth-ban) + NO guacamole.properties -> no auth backend ->
+# "An error has occurred" on the web page. Without this the grd web door cannot authenticate.
+Environment=GUACAMOLE_HOME=/etc/guacamole
 EOF
 
 # ---- first-boot config oneshot (TLS, GRD rdp+vnc, ssh keys, claudebox) -------
