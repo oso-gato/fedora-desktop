@@ -23,6 +23,11 @@ DNF="dnf -y --setopt=install_weak_deps=False"
 : "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed from Containerfile}"
 WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
 echo ">>> fedora-desktop-krdp web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
+# DB-backed auth (TOTP 2FA REQUIRES a database). MariaDB + JDBC driver are Fedora
+# class-(a) leaf packages; the two Guacamole extensions are class-(c) (GPG-verified
+# below). On this systemd lineage MariaDB runs as mariadb.service (not supervised-bash).
+DB_PKGS="mariadb-server mariadb mariadb-java-client"
+echo ">>> fedora-desktop-krdp DB-backed auth: MariaDB + Guacamole jdbc/totp | pkgs='$DB_PKGS'"
 
 # ---- vendor dnf repos (class b, gpgcheck=1) — shared with the xrdp+grd lineages
 curl -fsSL https://pkgs.tailscale.com/stable/fedora/tailscale.repo -o /etc/yum.repos.d/tailscale.repo
@@ -61,6 +66,7 @@ $DNF install \
     xorg-x11-server-Xwayland mesa-dri-drivers mesa-libgbm openssl \
     libsecret google-noto-sans-fonts dejavu-sans-fonts \
     ${WEB_PKGS} \
+    ${DB_PKGS} \
     firefox rclone \
     code 1password 1password-cli
 # claude-code is DELIBERATELY NOT here (lives in the claudebox). onedrive is NOT
@@ -166,7 +172,63 @@ install -m 0640 -o tomcat -g tomcat \
 rm -rf /tmp/guac-ban.tgz /tmp/guac-ban.tgz.asc /tmp/guac-KEYS "/tmp/guacamole-auth-ban-${GUAC_VERSION}"
 # auth-ban defaults (5 failed attempts / 5 min -> 5-min ban) are sane; tunable via
 # ban-max-invalid-attempts / ban-address-duration etc. in guacamole.properties.
-systemctl enable guacd.service tomcat.service
+
+# ---- DB-backed auth: guacamole-auth-jdbc (MySQL) + guacamole-auth-totp -------
+# Same class-(c) GPG-verify-fail-closed pattern + helper as the xrdp install.sh. TOTP
+# 2FA REQUIRES a database; entrypoint-krdp.sh provisions it via the SHARED helper
+# bin/guac-db-provision.sh (single source of truth for the four must-dos).
+guac_verify_tarball() {  # <basename.tar.gz> <out.tgz> — fetch + GPG-verify (fail-closed) + extract
+    _bn="$1"; _out="$2"
+    curl -fsSL -o "$_out"        "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/${_bn}"
+    curl -fsSL -o "${_out}.asc"  "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/${_bn}.asc"
+    curl -fsSL -o /tmp/guac-KEYS "https://downloads.apache.org/guacamole/KEYS"
+    GNUPGHOME="$(mktemp -d)"; export GNUPGHOME; gpg --quiet --import /tmp/guac-KEYS
+    gpg --status-fd 1 --verify "${_out}.asc" "$_out" 2>/dev/null \
+        | grep -q "VALIDSIG ${GUAC_GPG_FP}" \
+        || { echo "FATAL: ${_bn} GPG verify failed / not signed by pinned key ${GUAC_GPG_FP}" >&2; exit 1; }
+    echo "${_bn}: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
+    rm -rf "$GNUPGHOME"; unset GNUPGHOME
+    tar -xzf "$_out" -C /tmp
+    rm -f "$_out" "${_out}.asc" /tmp/guac-KEYS
+}
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole/extensions /etc/guacamole/lib
+guac_verify_tarball "guacamole-auth-jdbc-${GUAC_VERSION}.tar.gz" /tmp/guac-jdbc.tgz
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}/mysql/guacamole-auth-jdbc-mysql-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-jdbc-mysql-${GUAC_VERSION}.jar"
+install -d -m 0755 /usr/local/share/guacamole-schema
+install -m 0644 "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}/mysql/schema/001-create-schema.sql" \
+    /usr/local/share/guacamole-schema/001-create-schema.sql   # NEVER 002 (guacadmin backdoor)
+rm -rf "/tmp/guacamole-auth-jdbc-${GUAC_VERSION}"
+guac_verify_tarball "guacamole-auth-totp-${GUAC_VERSION}.tar.gz" /tmp/guac-totp.tgz
+install -m 0640 -o tomcat -g tomcat \
+    "/tmp/guacamole-auth-totp-${GUAC_VERSION}/guacamole-auth-totp-${GUAC_VERSION}.jar" \
+    "/etc/guacamole/extensions/guacamole-auth-totp-${GUAC_VERSION}.jar"
+rm -rf "/tmp/guacamole-auth-totp-${GUAC_VERSION}"
+install -m 0640 -o tomcat -g tomcat /usr/lib/java/mariadb-java-client.jar /etc/guacamole/lib/mariadb-java-client.jar
+# MariaDB daemon config. Named zz- so it sorts AFTER Fedora's mariadb-server.cnf and
+# these settings WIN: loopback ONLY (Principle 7 — 3306 is NEVER published); name
+# resolution + query-log + binlog OFF (no password in any log — Principle 5). Socket
+# stays the Fedora default /var/lib/mysql/mysql.sock (datadir-local; no /run dir needed).
+cat > /etc/my.cnf.d/zz-fedora-desktop.cnf <<'CNF'
+[mysqld]
+bind-address=127.0.0.1
+skip-name-resolve
+general-log=0
+skip-log-bin
+CNF
+
+# MariaDB + the web door. Ordering (drop-ins): the firstboot oneshot provisions the
+# DB so it runs After mariadb; Tomcat serves only After provisioning.
+systemctl enable mariadb.service guacd.service tomcat.service
+install -d -m 0755 /etc/systemd/system/tomcat.service.d
+cat > /etc/systemd/system/tomcat.service.d/10-after-db.conf <<'EOF'
+[Unit]
+After=mariadb.service fedora-desktop-krdp-firstboot.service
+# Requires the firstboot oneshot too: a FAILED provisioning (e.g. the guacadmin
+# fail-closed exit 1) must BLOCK Tomcat from serving :8443. After= alone would not.
+Requires=mariadb.service fedora-desktop-krdp-firstboot.service
+EOF
 
 # ---- first-boot config oneshot (TLS, KRdp rdp + krfb vnc, ssh keys, web door) -
 # entrypoint-krdp.sh runs ONCE under systemd; it reads the runtime secrets from
@@ -174,9 +236,10 @@ systemctl enable guacd.service tomcat.service
 # HEADLESS mode under core's systemd --user (no sddm) — see entrypoint-krdp.
 cat > /etc/systemd/system/fedora-desktop-krdp-firstboot.service <<'EOF'
 [Unit]
-Description=fedora-desktop KRDP first-boot config (TLS, KRdp rdp, krfb vnc, ssh keys, web door)
-After=systemd-user-sessions.service network-online.target
+Description=fedora-desktop KRDP first-boot config (TLS, KRdp rdp, krfb vnc, ssh keys, DB-auth, web door)
+After=systemd-user-sessions.service network-online.target mariadb.service
 Wants=network-online.target
+Requires=mariadb.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
