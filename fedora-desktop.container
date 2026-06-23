@@ -122,10 +122,12 @@ PublishPort=8443:8443
 # Or, for an operator-managed (uncommitted) env file:
 #   EnvironmentFile=%h/.config/fedora-desktop/secrets.env
 
-# Health = the Guacamole web page returns 200 over TLS. This proves Tomcat +
-# guacd + the webapp are all serving, which is the only public desktop door.
+# Health = the Guacamole web page returns 200 over TLS AND the loopback RDP
+# backend (:3389) the web door fronts is accepting connections AND the DB answers.
+# The :3389 probe (not just :8443) catches a DEAD RDP backend behind a live Tomcat —
+# without it the door 200s while the actual desktop session is gone (a fail-open).
 # Must match run.sh's --health-cmd. curl + bash are present in the base image.
-HealthCmd=bash -c "[ $(curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:8443/guacamole/) = 200 ] && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping"
+HealthCmd=bash -c "[ $(curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:8443/guacamole/) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping"
 HealthInterval=30s
 HealthTimeout=5s
 HealthRetries=3
