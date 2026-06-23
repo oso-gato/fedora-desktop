@@ -65,16 +65,30 @@ jobs:
           ^.github/workflows/
           (^|/)managed-settings\.json$
           (^|/).*\.container$
-          (^|/)run\.sh$
+          (^|/)run\.sh(\.[a-z0-9]+)?$
           (^|/)sync-authorized-keys\.sh$
           (^|/)gate-push\.sh$
           (^|/)box-rebuild\.sh$
-          (^|/)claudebox-assemble\.sh$
+          (^|/)claudebox-(assemble|init|daily)\.sh$
+          ^bin/(claude|claudebox-rebuild)$
           (^|/).*sudoers.*$
           '
           # Build a single ERE from the non-empty lines.
           ERE=$(printf '%s\n' "$PATTERNS" | sed '/^[[:space:]]*$/d' | paste -sd'|' -)
           echo "Using control-plane ERE: $ERE"
+
+          # Self-test: the ERE MUST match every control-plane path the law names.
+          # Guards against a future anchor/typo regression (this is the bug that let
+          # run.sh.grd slip through). A miss here FAILS the build, not silently passes.
+          for p in run.sh run.sh.grd fedora-desktop.container \
+                   policy/hooks/gate-push.sh policy/managed-settings.json policy/CLAUDE.md \
+                   .github/workflows/build.yml sync-authorized-keys.sh \
+                   box-rebuild.sh claudebox-assemble.sh claudebox-init.sh claudebox-daily.sh \
+                   bin/claude bin/claudebox-rebuild policy/sudoers.claudebox; do
+            printf '%s\n' "$p" | grep -Eq "$ERE" \
+              || { echo "::error title=Diff-guard ERE self-test failed::pattern set no longer matches control-plane path '$p'"; exit 1; }
+          done
+          echo "control-plane ERE self-test passed (all named guardrail paths match)"
 
           CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
           echo "Changed files in this PR:"
