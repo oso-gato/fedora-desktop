@@ -65,10 +65,14 @@ on the *same* door:
 **Usage** (off by default — no `FLEET_SSH` ⇒ behaviour unchanged):
 ```sh
 RDP_PW='…' GUAC_PW='…' \
-  FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core' \
+  FLEET_SSH='dev fedora-dev 22 core;vps erebus 22 core' \
   ./run.sh
 ```
 Each entry is `label host [port] [user]` (`;`-separated). Guacamole shows a tile per host.
+`host` is the target's **tailnet node name** (the bootstrap host's is `BOOTSTRAP_HOSTNAME`,
+default `erebus`) — **not** the repo name `fedora-bootstrap`, which is not a tailnet peer and
+resolves to loopback, landing the tile on the desktop's own key-only sshd (a dead password
+prompt). Use the target's `100.x` tailnet IP if MagicDNS is unreliable inside the container.
 
 **Auth for the SSH tiles** — two Principle-5-clean options, no secret baked into any layer:
 - **Preferred — keyless Tailscale-SSH:** guacd connects to the host's tailnet IP; tailscaled
