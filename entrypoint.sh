@@ -12,7 +12,7 @@
 #     * first-boot live-clone-or-seed of the spec
 #     * eager first-boot claudebox assemble (background)
 #
-#   DESKTOP (from fedora-xrdp/entrypoint.sh):
+#   DESKTOP (the XFCE/xrdp desktop layer):
 #     * seed core's RDP/system password (chpasswd) from RDP_PW
 #     * MariaDB (loopback) + Guacamole DB-auth/TOTP provisioning + TLS keystore mint
 #     * xrdp-sesman + xrdp (RDP :3389, tailnet-only)

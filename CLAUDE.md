@@ -13,7 +13,7 @@ ONLY way they change, and they are CONTROL-PLANE class (see THE PROMOTION GATE b
 
 fedora-desktop **is the fedora-dev harness extended**, not a fork: PART A of `install.sh` /
 `entrypoint.sh` is fedora-dev verbatim (nested rootless podman + key-only sshd + fail2ban +
-rsyslog + tailscale + the daily-claudebox machinery); PART B layers the fedora-xrdp desktop
+rsyslog + tailscale + the daily-claudebox machinery); PART B layers the XFCE/xrdp desktop
 (XFCE/X11 + xrdp + guacd/Tomcat/Guacamole + the app set). When extending, keep the two halves
 legible and keep the harness behavior intact.
 
@@ -136,7 +136,7 @@ AppImage → `/opt`, latest-at-build, sha256 resolve-and-logged — upstream pub
 ## BASE PACKAGES
 
 The fedora-desktop image itself (`install.sh`). Refreshed monthly via CI. Two halves: the
-fedora-dev HARNESS (PART A) and the fedora-xrdp DESKTOP (PART B). `claude-code` is NOT here
+fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is NOT here
 (it lives in the claudebox). `onedrive` is NOT here (rclone-only cloud).
 
 ### PART A — harness (Fedora repos + Tailscale)
@@ -401,7 +401,7 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | README.md | human-facing project doc (TL;DR, Build Principles, Packages, Deploy, Operate, design appendix) |
 | CLAUDE.md | this file — agent rules for editing this repo |
 | Containerfile | base image build spec (`FROM fedora:ARG`; pinned `GUAC_VERSION` + `GUAC_GPG_FP`; `DESKTOP_ENV=xfce`; runs install.sh; COPYs entrypoint + box seed + bin/ + policy/hooks/; `EXPOSE` metadata; `VOLUME`s incl. `/var/lib/mysql`) |
-| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (fedora-xrdp desktop: XFCE, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion + the GPG-verified guacamole-auth-ban/-jdbc/-totp extensions + MariaDB + the JDBC driver + the stashed `001` schema). Fails fast if the desktop ARGs aren't threaded through |
+| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (the XFCE/xrdp desktop: XFCE, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion + the GPG-verified guacamole-auth-ban/-jdbc/-totp extensions + MariaDB + the JDBC driver + the stashed `001` schema). Fails fast if the desktop ARGs aren't threaded through |
 | entrypoint.sh | PID 1 (root): seeds `core`'s password from RDP_PW; syncs ssh keys; mints the Guacamole TLS keystore; brings up the loopback MariaDB engine + provisions DB-auth/TOTP via the shared `guac-db-provision.sh`; supervises rsyslog + sshd + fail2ban + tailscaled + the rootless podman socket + inotify rebuild-watcher + daily-tick + first-boot live-clone-or-seed + eager claudebox assemble + xrdp-sesman/xrdp + **mariadbd** + guacd + Tomcat + the optional RFB_PW VNC mirror + the cloud-sync/vault-gitsync helpers; single `pgrep`/`kill -0` watchdog; SIGTERM trap for clean shutdown |
 | run.sh | manual deploy contract (`podman run -d` with --health-cmd, devices, volumes, restart, the public-only publish set + runtime secrets); fallback for non-systemd hosts. **CONTROL-PLANE (security flags + publish set)** |
 | fedora-desktop.container | systemd Quadlet (Pull=missing, Notify=healthy, AutoUpdate=registry, HealthCmd, the three Volumes, SecurityLabelDisable=true, the public-only PublishPort set, commented Secret= lines). **CONTROL-PLANE** |

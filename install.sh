@@ -6,7 +6,7 @@
 #            key-only sshd + fail2ban + rsyslog + tailscale + the box-bootstrap
 #            tooling). claude-code is NOT installed here — it lives in the
 #            claudebox (distrobox.ini additional_packages, daily-refreshed).
-#   PART B — the fedora-xrdp DESKTOP, lifted: XFCE (X11) + xrdp/xorgxrdp +
+#   PART B — the XFCE/xrdp DESKTOP: XFCE (X11) + xrdp/xorgxrdp +
 #            guacd/Tomcat/Guacamole web door + the app set (Obsidian, VS Code,
 #            Firefox, 1Password GUI+CLI, rclone).
 #
@@ -198,7 +198,7 @@ logpath = /var/log/secure
 EOF
 
 # ============================================================================
-# PART B — fedora-xrdp DESKTOP (lifted from fedora-xrdp/install.sh)
+# PART B — the XFCE/xrdp DESKTOP
 # ============================================================================
 
 # ---- vendor dnf repos for the desktop app set (gpgcheck=1) -----------------

@@ -8,7 +8,7 @@ can't reach out and disturb your wider setup.
 
 It's the **fedora-dev harness** (a self-refreshing Claude Code box: nested rootless podman,
 key-only SSH, fail2ban, Tailscale, a daily-rebuilt "claudebox") with an **XFCE desktop**
-layered on (recipe lifted from **fedora-xrdp**). Claude Code refreshes itself *daily*,
+layered on (the XFCE/xrdp desktop recipe). Claude Code refreshes itself *daily*,
 independent of the heavier desktop. The vault/wiki are governed by their *own* rules —
 Claude is the writer, you are the director.
 
@@ -47,7 +47,7 @@ Claude is the writer, you are the director.
 
 It is the **fedora-dev harness extended**, not a fork — the nested-podman + sshd/fail2ban +
 tailscale + daily-claudebox machinery is lifted verbatim and the XFCE remote desktop
-(fedora-xrdp recipe) is layered on top.
+(the XFCE/xrdp desktop recipe) is layered on top.
 
 ```
 self-develop → self-validate in the OWN nested engine → open PR → STOP → fedora-dev merges on Arthur's APPROVE
