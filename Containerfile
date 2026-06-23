@@ -1,7 +1,7 @@
 # fedora-desktop — fedora-dev's headless harness (nested rootless podman + a
 # daily-rebuilt claudebox + key-only sshd/fail2ban/rsyslog + tailscale, NO
-# systemd inside) WITH an XFCE remote-desktop layered on (lifted from the
-# fedora-xrdp recipe). Purpose: operate Arthur's Obsidian vault + LLM wiki, plus
+# systemd inside) WITH an XFCE remote-desktop layered on (the XFCE/xrdp
+# desktop recipe). Purpose: operate Arthur's Obsidian vault + LLM wiki, plus
 # maintainer dev.
 #
 # Base image rebuilt MONTHLY by CI (15th, --no-cache); the in-container claudebox
