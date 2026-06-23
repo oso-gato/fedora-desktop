@@ -44,19 +44,14 @@
 #     "EXCEPTIONS"). Narrowly recognised by the `-C <vault>` form, so the
 #     exemption can't be reused as a blanket `git push` allow.
 #
-# APPROVAL MARKER (one-shot, freshness-gated):
-#   ~/.local/state/claudebox/merge-approved
-#   The clickable promotion-gate flow `touch`es it immediately before performing
-#   the approved push; the hook CONSUMES it (deletes it) so it authorises exactly
-#   one push/merge. Markers older than $MARKER_TTL are ignored and removed — a
-#   leftover from a past approval can't authorise a new push.
+# THIS BOX IS PR-ONLY — it NEVER pushes or merges any `main`. There is no approval
+#   path and no marker here: a detected push/merge is UNCONDITIONALLY DENIED. Develop
+#   on a branch → open a PR → STOP; `fedora-dev` merges it on Arthur's approval (THE
+#   FLEET). The sole exemption is the automatic vault git-sync `git -C <vault> push`
+#   (below). (Only the fedora-dev gate has an interactive `ask` — it is the one box
+#   that merges; here there is nothing to approve, so we simply deny.)
 # ============================================================================
 set -uo pipefail
-
-# --- state dir + one-shot approval marker -----------------------------------
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claudebox"
-MARKER="$STATE_DIR/merge-approved"
-MARKER_TTL=120          # seconds; an approval older than this is stale
 
 # --- the vault clone path the git-sync pushes (exempt). Override via env. -----
 VAULT_DIR="${VAULT_PATH:-/home/core/obsidian/2nd-brain}"
@@ -100,30 +95,8 @@ deny() {
     exit 2
 }
 
-# marker_fresh(): true iff the one-shot approval marker exists, is ROOT-OWNED, AND
-# is younger than MARKER_TTL. CONSUMES (deletes) the marker either way → one-shot.
-#
-# ROOT-OWNED is the load-bearing GATE-01 fix: the in-box agent runs as uid 1000, so
-# it CAN `touch` this path — but a marker it writes is owned by uid 1000 and is
-# REJECTED here. Only the clickable approval flow, writing the marker from OUTSIDE
-# the box as root (`podman exec -u 0 … touch "$MARKER"`), produces a uid-0 marker
-# the gate will honor. So the agent cannot forge its own approval. (The home-volume
-# dir stays core-owned, so consuming/`rm` of the root file still works — unlink
-# depends on the directory's write bit, not the file's owner.)
-marker_fresh() {
-    [ -f "$MARKER" ] || return 1
-    local now mtime age owner
-    owner="$(stat -c %u "$MARKER" 2>/dev/null || echo -1)"
-    if [ "$owner" != "0" ]; then                # not root-owned → forged/untrusted
-        rm -f "$MARKER" 2>/dev/null || true     # consume so it can't linger
-        return 1
-    fi
-    now="$(date +%s 2>/dev/null || echo 0)"
-    mtime="$(stat -c %Y "$MARKER" 2>/dev/null || echo 0)"
-    age=$(( now - mtime ))
-    rm -f "$MARKER" 2>/dev/null || true        # consume regardless of freshness
-    [ "$age" -ge 0 ] && [ "$age" -le "$MARKER_TTL" ]
-}
+# (No approval marker / marker_fresh here — this box is PR-only; a push/merge is
+#  always denied. See the header. The interactive-`ask` path lives only in fedora-dev.)
 
 # is_vault_sync_push(): true iff the command is the narrow, exempt vault push —
 # `git -C <VAULT_DIR> … push …` AND NOTHING ELSE. HARDENED (GATE-03): rejects any
@@ -239,10 +212,7 @@ fi
 [ "$blocked" -eq 0 ] && exit 0
 
 # ----------------------------------------------------------------------------
-# 5) It IS a push/merge. Allow ONLY with a fresh one-shot approval marker.
+# 5) It IS a push/merge → DENY unconditionally. This box is PR-only; it never
+#    pushes or merges main. (The vault git-sync was already exempted above.)
 # ----------------------------------------------------------------------------
-if marker_fresh; then
-    exit 0
-fi
-
-deny "Push/merge blocked by the promotion gate. This mutates a remote branch or merges a PR, which requires Arthur's explicit clickable approval. Present the change as a discrete decision; on approval the flow writes a one-shot marker at $MARKER (fresh < ${MARKER_TTL}s) and re-runs. (The vault git-sync 'git -C <vault> push' is exempt and needs no marker.)"
+deny "Push/merge blocked: this box is PR-only and never pushes or merges any 'main'. Open a PR and STOP — fedora-dev merges it on Arthur's approval (THE FLEET). The vault git-sync 'git -C <vault> push' is the sole exemption and never reaches here."
