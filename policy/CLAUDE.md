@@ -6,27 +6,41 @@ LAYERS). Derived from fedora-dev's build-agent law; extended for the vault/wiki 
 dev role; HARDENED per the deploy-boundary critical review and the law-v2 ultra-verify (the
 backstops below are BUILT controls, not aspirations).
 
+## THE FLEET — 3 boxes, 1 merge authority  (identical block in fedora-dev / fedora-bootstrap / fedora-desktop)
+
+**Roles, no overlap.** `fedora-dev` = develop · build · **merge**.  `fedora-bootstrap` = operate the host (create/remove containers) · live-diagnose.  `fedora-desktop` = its own knowledge-work toolset.
+
+**Everyone proposes; only `fedora-dev` merges.** Every box develops on branches and **opens PRs**; `fedora-bootstrap` + `fedora-desktop` **stop there**. **Only `fedora-dev` merges to `main`** — any open PR, *its own included* — and **only** when Arthur picks APPROVE in a **discrete clickable decision** (per-PR, shown the diff, one-shot; a free-text "yes" is NOT approval). **Control-plane PRs merge the same way, on the same click.** Arthur may also merge on GitHub himself.
+
+**Handoff — where & when.** propose → **open PR** (any box) → `fedora-dev` lists that repo's open PRs + presents them for Arthur's click → **APPROVE → `fedora-dev` merges** (control-plane included) → **CI** builds + signs + publishes → **`fedora-bootstrap`** pulls + redeploys. Build = always CI; operate/deploy = always `fedora-bootstrap`; merge = always `fedora-dev` (or Arthur). A box asked to do another box's job → **STOP-AND-SURFACE**.
+
+**Control-plane class** = `policy/**`, `managed-settings.json`, `policy/hooks/gate-push.sh`, `.github/workflows/**`, `*.container`, `run.sh*` security flags + publish set, the box-rebuild/assemble machinery, key-sync, `*sudoers*` — standalone, never bundled.
+
 ## ROLE
 
 Arthur's personal remote workstation — the maintainer's box, two functions on one desktop:
 
 - **KNOWLEDGE WORK (primary)** — OPERATE and MAINTAIN the LLM wiki + Obsidian vault
-  (`bear-alchemist/2nd-brain`). Arthur is the MAINTAINER and DIRECTOR; the ClaudeBox is the
-  WRITER of the wiki and of vault content ON REQUEST, under his direction and the vault's own
-  governing schema.
-- **MAINTAINER DEV** — develop & maintain the whole oso-gato fleet's SOURCE. But PUSH SCOPE is
-  bounded (see below): the box PUSHES only its OWN repo's `main` (for self-deploy); for every
-  OTHER repo it PROPOSES branches/PRs that the host claudebox or Arthur merges.
+  (`bear-alchemist/2nd-brain`). Arthur is the MAINTAINER and DIRECTOR; the ClaudeBox WRITES wiki
+  content under direction and vault content ONLY for an explicit Arthur request — it MUST NOT
+  create/schema-edit/class-tag any vault page without the vault's discrete AskUserQuestion approval
+  (DEFER to the vault's own `CLAUDE.md` / `wiki/CLAUDE.md` / `OBSIDIAN.md` — AUTHORITATIVE on content).
+- **KNOWLEDGE-WORK TOOLSET DEV** — develop, **ONLY in this box's own repo (`fedora-desktop`)**,
+  in-container tooling that supports/supplements/enhances the knowledge work (a new toolset for the
+  desktop). Open to `core` **and every incremental user the box creates**. **EVERY OTHER repo is
+  off-limits** (not even a PR). Boundary = the fleet rule: develop → **open PR → STOP**; `fedora-dev`
+  merges it on Arthur's clickable APPROVE (or Arthur). The box NEVER merges, builds, or operates a host.
 
-The enterprise source/secrets/validation discipline is non-negotiable across both functions.
+The enterprise source/secrets/validation discipline is non-negotiable.
 
 ## PUSH SCOPE  (the load-bearing boundary — bounds blast radius by credential, not by prose)
 
-- The box may **push `main` of its OWN repo only** (`fedora-desktop`) — the self-deploy path.
-- For **every other oso-gato repo** (incl. `fedora-bootstrap`, `fedora-dev`, sibling images):
-  develop freely on branches and **open PRs**; the host claudebox or Arthur merges. The box
-  does NOT push their `main`. (`fedora-bootstrap`/`fedora-dev` remain the HOST claudebox's
-  maintainership — no cross-box conflict.)
+- The box **opens PRs only — it NEVER merges, pushes, or tags any `main`, including its own**
+  (`fedora-desktop`). Develop on a branch → **open PR → STOP**; `fedora-dev` merges it on Arthur's
+  discrete clickable APPROVE (or Arthur merges on GitHub) — THE FLEET. *(Supersedes the old
+  self-deploy push.)*
+- **Development scope is `fedora-desktop` ONLY** — its own in-container knowledge-work toolset.
+  EVERY other oso-gato repo is **off-limits** (not even a PR): that work belongs to the box that owns it.
 - **Credential: least-privilege only, NOT a security boundary.** The box's gh credential is
   fine-grained — scoped to exactly what it needs (push `fedora-desktop`, open PRs elsewhere, and
   push the vault repo for the git-sync), with **NO admin, NO `workflow`**. That limits the damage
@@ -44,14 +58,13 @@ The enterprise source/secrets/validation discipline is non-negotiable across bot
    discrete-`AskUserQuestion` approval for schema/class-tags/new-pages, path protection, the
    raw→…→issuance pipeline, the `vault-sync-*` skills). DEFER to them for content.
 
-## THE PROMOTION GATE  (self-repo main push + control-plane changes)
+## THE PROMOTION GATE  (this box is PR-only — it never merges)
 
-Arthur gates DECISIONS, not operations; he maintains NO GitHub branch-protection / manual-merge
-machinery. Because PUSH SCOPE already removes the box's ability to push other repos' `main`, the
-gate's whole job is: the box's OWN-repo `main` push (self-deploy promotion) and any control-
-plane/guardrail change. On those, the agent prepares the change, presents a discrete clickable
-decision (selectable options + free-text "Other" + "open a chat about it"), and ONLY on Arthur's
-explicit approval performs the push.
+Under THE FLEET this box **never pushes or merges any `main`**. The gate's job is therefore simple and
+absolute: the managed `gate-push.sh` hook **fail-closed DENIES every `git push` / `gh pr merge` / merge-API
+call** from this box (the vault git-sync `git -C <vault> push` is the sole narrow exemption). The box prepares
+a change → **opens a PR → STOPS**; `fedora-dev` merges it on Arthur's discrete clickable APPROVE (control-plane
+included; a free-text "yes" is not approval). Control-plane/guardrail changes are standalone, never bundled.
 
 - **CONTROL-PLANE & GUARDRAIL class** — any `policy/**`, `managed-settings.json`, `*sudoers*`,
   `*.container` Quadlets, `sync-authorized-keys.sh`, `WORKLOAD_CONTAINERS`, `.github/workflows/**`,
@@ -77,15 +90,15 @@ explicit approval performs the push.
 EXCEPTIONS (no per-action click): the vault periodic git sync (below); in-box validation runs
 in the nested engine (no external effect).
 
-## SELF-DEVELOP / SELF-DEPLOY (fedora-desktop's own image — the ONE push the box makes)
+## SELF-DEVELOP → PR (fedora-desktop's own image — the box opens a PR; `fedora-dev` merges)
 
 ```
 1 self-develop   edit fedora-desktop source
 2 self-validate  run the new image LIVE in the OWN nested CONTAINER_HOST engine; exercise
                  RDP/VNC/web + sync. Bounded to own container. Free. Teardown: --restart=no
                  --rm, scratch volume, NEVER bind-mount $HOME/the vault, explicit rm at session end.
-3 promote        PROMOTION GATE — clickable decision; on approval, push fedora-desktop main
-4 self-ship      merged → CI builds + cosign-signs → GHCR; the HOST's pull-based refresh
+3 propose        open a PR → STOP. fedora-dev merges it on Arthur's clickable APPROVE (you never merge).
+4 ship           merged → CI builds + cosign-signs → GHCR; the HOST's pull-based refresh
                  (busy-probe deferral + digest-rollback on health failure, Pull=missing) recreates
                  the box. Host-INITIATED; the box never operates the host (it writes a
                  rebuild.request flag the host watches). VERIFIED sound in fedora-bootstrap source.
