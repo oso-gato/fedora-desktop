@@ -19,7 +19,11 @@
 #               shown on the SAME public web door — VPN-slot-free fleet access from any
 #               device incl. iOS on another VPN (see ZTNA-ACCESS.md). ';'-separated
 #               "label host [port] [user]", e.g.
-#               FLEET_SSH='dev fedora-dev 22 core;vps fedora-bootstrap 22 core'.
+#               FLEET_SSH='dev fedora-dev 22 core;vps erebus 22 core'.
+#               Each 'host' is the target's TAILNET node name — the bootstrap host's is
+#               BOOTSTRAP_HOSTNAME (default 'erebus'), NOT the repo name 'fedora-bootstrap'
+#               (a non-tailnet name resolves to loopback → the tile hits the desktop's OWN
+#               key-only sshd → a dead password prompt). Use the 100.x tailnet IP if unsure.
 #               Reached over the desktop's SERVER-SIDE tailnet; prefer keyless
 #               Tailscale-SSH, else FLEET_SSH_KEY=/path/to/key (bind-mounted, not baked).
 #   USER{1..5}_NAME / _PW / _ACCESS (optional) — up to FIVE additional desktop users
