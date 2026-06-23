@@ -63,10 +63,24 @@ RDP_PW="$(choose_password "core's RDP/system password")"
 GUAC_PW="$(choose_password "core's Guacamole WEB password (the only public door)")"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
 
-# core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the
-# core level. FLEET_SSH just DEFINES where the fleet targets live (env-overridable for
-# non-standard hostnames); WHICH additional users ALSO get them is asked per-user below.
-FLEET_SSH="${FLEET_SSH:-dev fedora-dev 22 core;vps fedora-bootstrap 22 core}"
+# core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the core
+# level; WHICH additional users ALSO get them is asked per-user below. FLEET_SSH defines WHERE
+# the fleet targets live, and each per-tile hostname is the target's TAILNET node name. The
+# dev tile targets the fedora-dev workload (node 'fedora-dev'); the vps tile targets THIS
+# bootstrap host, whose tailnet name varies per deployment (e.g. 'erebus') — so ASK rather
+# than ship a wrong 'fedora-bootstrap' default that MagicDNS can't resolve. Power users can
+# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles use
+# KEYLESS Tailscale SSH — they only work once THIS desktop has joined the tailnet (a
+# TS_AUTHKEY below, or a later `tailscale up`) AND the targets accept Tailscale SSH for this
+# node (tailnet ACL). There is no fleet password.
+if [ -z "${FLEET_SSH:-}" ]; then
+  echo "  Fleet SSH tiles (keyless Tailscale SSH; use each target's TAILNET node name):" >&2
+  dev_host="$(ask '  dev workload tailnet name (blank = no dev tile)' 'fedora-dev')"
+  vps_host="$(ask '  bootstrap-host (VPS) tailnet name (blank = no vps tile)' '')"
+  FLEET_SSH=""
+  [ -n "$dev_host" ] && FLEET_SSH="dev ${dev_host} 22 core"
+  [ -n "$vps_host" ] && FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}vps ${vps_host} 22 core"
+fi
 TS_AUTHKEY="$(ask 'Tailscale auth key (blank = interactive join later)' '')"
 
 # --- how many additional users, then per-user name / password / fleet access ---
