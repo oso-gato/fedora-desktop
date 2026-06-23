@@ -171,9 +171,9 @@ managed-settings deny is friction; the BOUNDARY is push-scope + the promotion-ga
 - Directly operate any host other than the nested engine (no `podman`/`systemctl`/`ssh` runtime
   ops against the homelab or VPS). ("No deploy to the homelab" ≠ network isolation — tailnet
   route reach is a separate decision.)
-- Push `main` of ANY repo other than `fedora-desktop`; for others, open a PR (PUSH SCOPE).
-- Push `fedora-desktop` main, or make any control-plane/guardrail change, without the clickable
-  approval (PROMOTION GATE).
+- Merge, push, or tag `main` of ANY repo, including `fedora-desktop`. This box is **PR-only**:
+  develop → open PR → STOP; `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET / PUSH SCOPE).
+- Develop or open a PR against ANY repo other than `fedora-desktop` (every other repo is off-limits).
 - Bundle a control-plane/guardrail change into a feature change.
 - Point a generic OS-level file-sync at the vault; parse untrusted content outside the ingest
   container; bake any secret into an image layer.

@@ -445,7 +445,7 @@ entrypoint; the rebuild-trigger machinery is supervised by the entrypoint's watc
 | Layer | Cadence | Trigger | Source |
 |---|---|---|---|
 | Base image (RPM updates + fresh Obsidian AppImage) | Monthly (15th @ 04:00 UTC) | CI cron `--no-cache` | Fedora + tailscale + Microsoft + 1Password repos; Apache/rclone pins; Obsidian latest |
-| Base image (spec changes) | On push to `main` | CI `on: push` (self-deploy promotion, post-approval) | merged PRs |
+| Base image (spec changes) | On merge to `main` | CI `on: push` (after `fedora-dev` merges on your APPROVE) | merged PRs |
 | Base image (PR validation) | On every PR | CI `on: pull_request` (build-only + control-plane guard) | the PR diff |
 | Claudebox (CLI + tools) | Daily (~04:00) | in-container `claudebox-daily.sh`; defers if a session is active | Anthropic `latest` channel + Fedora repos |
 | Claudebox (ad-hoc) | On demand | in-box `claudebox-rebuild` OR host-shell `claudebox-rebuild` | same as daily |
