@@ -20,10 +20,10 @@ Claude is the writer, you are the director.
   RDP is the #1 ransomware door, so it's one Tailscale tap away instead of public.
 - 📝 **What it does:** a full desktop with **Obsidian** (notes), **VS Code** (code),
   **Firefox**, **1Password** (credentials), and **Claude Code** (the AI, auto-updated daily).
-- ✋ **How changes ship — the workflow:** Claude can rebuild *itself*, but it tests the new
-  version in its own walls and **self-deploys only after you click OK.** For every *other*
-  repo it only **opens a PR** — it never pushes their `main`. A workshop that can't wander
-  out and rearrange the house.
+- ✋ **How changes ship — the fleet rule:** this box **opens PRs only — it never merges or self-deploys.**
+  It develops its own knowledge-work tools, tests them in its own walls, and opens a PR; **`fedora-dev`
+  merges it on your one click.** Every *other* repo is off-limits. A workshop that proposes improvements
+  to its own bench — and can't touch the rest of the house.
 - 🗄️ **Your vault & wiki:** Claude is the live-in librarian — it writes and maintains, **you
   direct and approve** — under the vault's own governing schema. Notes sync live via Obsidian
   Sync + auto-back-up to a private GitHub mirror.
@@ -40,16 +40,17 @@ Claude is the writer, you are the director.
   (`bear-alchemist/2nd-brain`). Arthur is the **maintainer and director**; the box is the
   **writer of the wiki** and of vault content **on request**, under his direction and the
   vault's own governing schema.
-- **Maintainer dev** — develop and maintain the whole oso-gato fleet's source. **Push scope
-  is bounded:** the box pushes only its **own** repo's `main` (its self-deploy path); for
-  every other repo it **opens a PR** that Arthur or the host claudebox merges.
+- **Knowledge-work toolset dev** — develop, **only in this box's own repo (`fedora-desktop`)**,
+  in-container tooling that supports/supplements/enhances the knowledge work (open to `core` + every
+  user the box creates). **Every other repo is off-limits.** The box **opens PRs only — it never
+  merges**: develop → open PR → STOP; `fedora-dev` merges on Arthur's click (THE FLEET).
 
 It is the **fedora-dev harness extended**, not a fork — the nested-podman + sshd/fail2ban +
 tailscale + daily-claudebox machinery is lifted verbatim and the XFCE remote desktop
 (fedora-xrdp recipe) is layered on top.
 
 ```
-self-develop → self-validate in the OWN nested engine → clickable approval → push fedora-desktop main
+self-develop → self-validate in the OWN nested engine → open PR → STOP → fedora-dev merges on Arthur's APPROVE
             → CI builds + cosign-signs → ghcr.io/oso-gato/fedora-desktop:latest → host pull-refresh recreates the box
 ```
 
@@ -81,7 +82,7 @@ metapackage traps) lives in [CLAUDE.md](CLAUDE.md).
 | 7 | DEPLOY CONTRACT | `run.sh` is the only sanctioned way to run the image: it carries the runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the **port-publish set**. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. Sensitive ports (RDP/VNC + password-auth) stay tailnet-only — never `-p`. |
 | 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. A **control-plane diff-guard** fails any PR touching guardrail files without an explicit waiver label. The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)`, functional-probe each access path (web/RDP/VNC/ssh + sync). Final proof is CI green + a host-side deploy. |
-| 10 | PROMOTION GATE | The box pushes only `fedora-desktop` `main`, and only after a clickable approval; control-plane/guardrail changes are standalone, never bundled, and approval-gated. Other repos: PR only. Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the CI diff-guard. |
+| 10 | PROMOTION GATE | The box is **PR-only** — it opens PRs and never merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled. Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the CI diff-guard. |
 
 ## Packages
 
@@ -327,16 +328,14 @@ In the desktop (or any ssh/mosh shell, all land in tmux `main`), open a terminal
 `claude` to reach the in-box agent. The XFCE session persists across disconnects
 (`KillDisconnected=false`) — reconnect over RDP/web and your apps are still open.
 
-### The workflow — PR-first, maintainer-approved-merge
+### The workflow — PR-only (this box never merges)
 
-Claude **never pushes another repo's `main`** and **never self-deploys without your click**:
+Under **THE FLEET**, this box **opens PRs and never merges, pushes, or tags any `main`** — including its own:
 
-1. **Other repos** (`fedora-bootstrap`, `fedora-dev`, sibling images, the vault for content):
-   develop on a branch → `gh pr create` → Arthur or the host claudebox merges.
-2. **This repo's self-deploy** (`fedora-desktop` `main`) and **any control-plane/guardrail
-   change** (`policy/**`, `managed-settings.json`, `.github/workflows/**`, a `*.container`
-   Quadlet, `run.sh` security flags, the key-sync helper): the agent prepares the change,
-   presents a discrete clickable decision, and only on explicit approval performs the push.
+1. **Its own repo** (`fedora-desktop` — its knowledge-work toolset, the only repo it develops):
+   develop on a branch → `gh pr create` → **STOP.** `fedora-dev` merges it on your discrete clickable
+   APPROVE (control-plane included), or you merge on GitHub.
+2. **Every other repo is off-limits** — not even a PR; that work belongs to the box that owns it.
 
 This is enforced mechanically, not by good behavior:
 - a managed `PreToolUse` hook (`policy/hooks/gate-push.sh`) **denies** `git push` / `gh pr
@@ -348,15 +347,15 @@ This is enforced mechanically, not by good behavior:
 - the **CI control-plane diff-guard** fails any PR touching a guardrail file unless a reviewer
   applies the `control-plane-approved` label (standalone, never bundled).
 
-### Self-develop / self-deploy (the one push the box makes)
+### Self-develop → PR (the box opens a PR; `fedora-dev` merges)
 
 ```
 1 self-develop   edit fedora-desktop source
 2 self-validate  run the NEW image LIVE in the OWN nested CONTAINER_HOST engine; exercise
                  RDP/VNC/web + sync. --restart=no --rm, scratch volume, NEVER bind-mount $HOME
                  or the vault, explicit rm at session end
-3 promote        clickable approval → push fedora-desktop main
-4 self-ship      merged → CI builds + cosign-signs → GHCR → the HOST's pull-based refresh
+3 propose        open a PR → STOP. fedora-dev merges it on Arthur's clickable APPROVE (you never merge).
+4 ship           merged → CI builds + cosign-signs → GHCR → the HOST's pull-based refresh
                  (busy-probe deferral + digest-rollback on health failure) recreates the box
 ```
 

@@ -40,11 +40,12 @@ that's the design that lets mid-cycle edits survive monthly base recreates.
 The box bounds its blast radius by *credential* + *built controls*, not by prose. Detail is in
 [policy/CLAUDE.md](policy/CLAUDE.md); the rules that bind a repo edit:
 
-- The box may **push `main` of its OWN repo only** (`fedora-desktop`) — the self-deploy path.
-  For **every other oso-gato repo**: develop on branches + **open PRs**; Arthur or the host
-  claudebox merges. Never push another repo's `main`.
-- **Self-repo `main` push** and **any control-plane/guardrail change** require a clickable
-  approval (the PROMOTION GATE). CONTROL-PLANE class = `policy/**`, `managed-settings.json`,
+- The box **opens PRs only — it NEVER merges, pushes, or tags any `main`, including `fedora-desktop`'s.**
+  Develop on a branch → **open PR → STOP**; `fedora-dev` merges it on Arthur's clickable APPROVE (or
+  Arthur). Development scope is **`fedora-desktop` ONLY** (its knowledge-work toolset); every other
+  repo is off-limits — see THE FLEET in policy/CLAUDE.md.
+- **Any control-plane/guardrail change** is standalone + merges only on the clickable APPROVE
+  (`fedora-dev` merges). CONTROL-PLANE class = `policy/**`, `managed-settings.json`,
   `*.container` Quadlets, `.github/workflows/**`, `run.sh` security flags, the key-sync helper,
   `policy/hooks/gate-push.sh`, the box-rebuild control machinery, `*sudoers*`. Such changes are
   **STANDALONE, single-purpose, NEVER bundled** with a feature change, and named so the diff
@@ -84,7 +85,7 @@ Principle 9 that the image comes up + serves every access path with no display/s
 | 7 | DEPLOY CONTRACT | Every image ships a `run.sh` that is the only sanctioned way to run it: runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the PORT-PUBLISH SET. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. **The web gateway is the ONLY public publish — `${WEB_PORT}→8443` TLS (Apache Guacamole, the sole web gate), `WEB_PORT` default 8443, changeable at spin-up. ssh (`:22`), mosh (UDP `61001-62000`), RDP (`:3389`) and VNC (`:5900`) are ALL TAILNET-ONLY — never `-p`, and additionally dropped on non-`lo`/non-`tailscale0` interfaces by the in-container `nft fd_tailnet_guard` (tailnet-only by *construction*). ssh is reached via Tailscale SSH (keyless) or ssh-key over the tailnet.** Secrets are per-door, supplied at spin-up (the host claudebox ASKS the operator — see README DEPLOY CONTRACT): `RDP_PW` (strong; system/RDP + web SSO) + `GUAC_PW` (strong; the public web door — Guacamole authenticates the public, non-tailnet door, hardened by the `guacamole-auth-ban` brute-force lockout extension + TLS), with `RFB_PW` OPTIONAL (arms the tailnet-only :5900 native-VNC mirror). Widening the publish set is a control-plane change. |
 | 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, the 15th monthly (`--no-cache`), and dispatch; PRs build-validate only (no registry write). A **control-plane diff-guard** job fails any PR touching a guardrail file without the `control-plane-approved` label. Built-in token only. The IN-CONTAINER claudebox refreshes daily on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)` plus a functional probe of each access path (web :8443 → 200 + login, RDP over tailnet, optional VNC, ssh :4444/tailnet, mosh; cloud-sync + vault-gitsync if configured). Self-validation runs in the OWN nested `CONTAINER_HOST` engine, scratch volume, NEVER bind-mounting `$HOME`/the vault, torn down at session end. Final proof is CI green + a host deploy. |
-| 10 | PROMOTION GATE / PUSH SCOPE | The box pushes only `fedora-desktop` `main`, only after a clickable approval; control-plane/guardrail changes are standalone, never bundled, and approval-gated; every other repo is PR-only. Enforced by `policy/hooks/gate-push.sh` + `managed-settings.json` + the CI diff-guard. The in-box agent grows `distrobox.ini`/`policy/`/scripts only by editing the LIVE clone at `/home/core/.local/share/fedora-dev/` and opening a PR. |
+| 10 | PROMOTION GATE / PUSH SCOPE | The box is **PR-only** — it opens PRs and NEVER merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled. Enforced by `policy/hooks/gate-push.sh` + `managed-settings.json` + the CI diff-guard. The in-box agent grows `distrobox.ini`/`policy/`/scripts only by editing the LIVE clone and opening a PR. |
 
 ### Class-(c) sources — the bounded last-resort exception (fleet-wide; identical in fedora-dev + fedora-bootstrap)
 
@@ -444,7 +445,7 @@ entrypoint; the rebuild-trigger machinery is supervised by the entrypoint's watc
 | Layer | Cadence | Trigger | Source |
 |---|---|---|---|
 | Base image (RPM updates + fresh Obsidian AppImage) | Monthly (15th @ 04:00 UTC) | CI cron `--no-cache` | Fedora + tailscale + Microsoft + 1Password repos; Apache/rclone pins; Obsidian latest |
-| Base image (spec changes) | On push to `main` | CI `on: push` (self-deploy promotion, post-approval) | merged PRs |
+| Base image (spec changes) | On merge to `main` | CI `on: push` (after `fedora-dev` merges on your APPROVE) | merged PRs |
 | Base image (PR validation) | On every PR | CI `on: pull_request` (build-only + control-plane guard) | the PR diff |
 | Claudebox (CLI + tools) | Daily (~04:00) | in-container `claudebox-daily.sh`; defers if a session is active | Anthropic `latest` channel + Fedora repos |
 | Claudebox (ad-hoc) | On demand | in-box `claudebox-rebuild` OR host-shell `claudebox-rebuild` | same as daily |
