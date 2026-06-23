@@ -32,6 +32,18 @@ Claude is the writer, you are the director.
   can read. The real protection is that the **risky step — chewing on untrusted web content —
   runs in a throwaway sandbox with no keys, no vault, and no internet.**
 
+## Where this sits — the fleet
+
+**This repo is the `fedora-desktop` box** of a three-box swarm — **the application box** (knowledge-work + its own toolset; PR-only). Full map: **[FLEET.md](FLEET.md)**.
+
+| Box | Role | Builds? | Merges? | Operates host? | Spin up |
+|-----|------|:--:|:--:|:--:|---------|
+| **fedora-dev** | develop · build · **merge** | ✅ nested | ✅ **(sole merger)** | ❌ | `./spin-up.sh` |
+| **fedora-bootstrap** | operate host · live-diagnose → PR | ❌ (CI) | ❌ PR-only | ✅ incl. create/remove | `./day0.sh` (Day-0) |
+| **fedora-desktop** *(this one)* | knowledge-work + own toolset → PR | ❌ (CI) | ❌ PR-only | ❌ | `./spin-up.sh` |
+
+This box **opens PRs only — it never merges or self-deploys**; `fedora-dev` merges on Arthur's **clickable APPROVE**. See [FLEET.md](FLEET.md) for the handoff + boundaries.
+
 ## Purpose
 
 `fedora-desktop` is Arthur's **personal remote workstation** — one desktop, two functions:
