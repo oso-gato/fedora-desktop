@@ -62,6 +62,9 @@ echo "=== fedora-desktop spin-up ===" >&2
 RDP_PW="$(choose_password "core's RDP/system password")"
 GUAC_PW="$(choose_password "core's Guacamole WEB password (the only public door)")"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
+# Host deploy pulls the GHCR-published image; run.sh's localhost/ default is for in-box
+# self-validation only (the host never builds locally — CI builds). Default to GHCR here.
+IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box self-validation only)' 'ghcr.io/oso-gato/fedora-desktop:latest')}"
 
 # core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the core
 # level; WHICH additional users ALSO get them is asked per-user below. FLEET_SSH defines WHERE
@@ -123,5 +126,5 @@ done
 } >&2
 [ "$(ask 'Spin up the container now? (y/n)' y)" = y ] || { echo "aborted (nothing launched)" >&2; exit 0; }
 
-export RDP_PW GUAC_PW WEB_PORT FLEET_SSH TS_AUTHKEY
+export RDP_PW GUAC_PW WEB_PORT FLEET_SSH TS_AUTHKEY IMAGE
 exec ./run.sh
