@@ -271,11 +271,21 @@ non-`lo`/non-`tailscale0` interfaces by the in-container `nft` guard. **There is
 door** — recovery if the tailnet is unreachable is host-side (`podman exec`), not a public `:4444`
 (an earlier draft of this table wrongly listed one; the deploy scripts have always published web-only).
 
-### run.sh (interactive / non-systemd hosts)
+### spin-up.sh (interactive — the recommended by-hand way in)
 
 ```sh
-RDP_PW='…' GUAC_PW='…' [RFB_PW='…'] [TS_AUTHKEY=tskey-…] [IMAGE=…] ./run.sh
+./spin-up.sh
 ```
+
+The fleet-consistent wizard: it ASKS for core's RDP/Guacamole passwords, the web port, optional fleet tiles + extra users, a **Tailscale auth key** (blank = `login.tailscale.com` web-login), and the **image** (defaults to the GHCR-published image), then hands off to `run.sh` (grd lineage: `run.sh.grd`). Never hand-roll `podman run`.
+
+### run.sh (non-interactive / scripted / non-systemd hosts)
+
+```sh
+RDP_PW='…' GUAC_PW='…' [RFB_PW='…'] [TS_AUTHKEY=tskey-…] IMAGE=ghcr.io/oso-gato/fedora-desktop:latest ./run.sh
+```
+
+The env-driven contract `spin-up.sh` wraps. **On a real host pass the GHCR image** — `localhost/…` (run.sh's default) is in-box self-validation only (the agent builds locally, then runs `./run.sh` to validate per Principle 9).
 
 Health = `curl -sk https://127.0.0.1:8443/guacamole/` returns 200 (proves Tomcat + guacd +
 the webapp all serve). Volumes: `fedora-desktop-home:/home/core`,
