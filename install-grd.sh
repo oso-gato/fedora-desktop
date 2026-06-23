@@ -209,6 +209,18 @@ CNF
 
 # MariaDB + the web door. Ordering (drop-ins, not unit edits): the firstboot oneshot
 # provisions the DB so it runs After mariadb; Tomcat serves only After provisioning.
+# guacd MUST bind the IPv4 loopback to match guacamole.properties' guacd-hostname:
+# 127.0.0.1 (set by the SHARED bin/guac-db-provision.sh — do NOT change that; the xrdp
+# lineage depends on it). Fedora's stock guacd.service runs `/usr/sbin/guacd -f $OPTS`;
+# with $OPTS empty, guacd 1.6.0 defaults to 'localhost' -> ::1 on a dual-stack box, so
+# Guacamole's IPv4 dial to 127.0.0.1:4822 is refused. Re-express the xrdp lineage's
+# explicit `guacd -b 127.0.0.1` (entrypoint.sh) as a stock-unit drop-in.
+install -d -m 0755 /etc/systemd/system/guacd.service.d
+cat > /etc/systemd/system/guacd.service.d/10-bind-loopback.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/guacd -f -b 127.0.0.1
+EOF
 systemctl enable mariadb.service guacd.service tomcat.service
 install -d -m 0755 /etc/systemd/system/tomcat.service.d
 cat > /etc/systemd/system/tomcat.service.d/10-after-db.conf <<'EOF'

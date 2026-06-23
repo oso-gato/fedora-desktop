@@ -22,7 +22,18 @@ set -eu
 : "${GUAC_PW:?GUAC_PW must be set (the public Guacamole web-login password) — see run.sh.grd}"
 # GRD VNC (:5900, tailnet-only) is an optional mirror: armed by RFB_PW when set,
 # else falls back to the RDP_PW so native VNC viewers still have a usable password.
-VNC_PW="${RFB_PW:-$RDP_PW}"
+# GRD/FreeRDP cap the VNC password at 8 chars (MAX_VNC_PASSWORD_SIZE in grd-ctl.c). The
+# strong RDP_PW (often a multi-word passphrase) MUST NOT be reused for VNC — that reuse is
+# exactly what raised "Password is too long" and aborted the whole grd-setup under set -e.
+# The :5900 VNC mirror is OPTIONAL: arm it only when RFB_PW is set AND <=8 chars; otherwise
+# leave VNC disabled (the public door is Guacamole-over-RDP regardless; native VNC is a
+# tailnet-only extra). RDP's set-credentials has no such length limit.
+VNC_PW="${RFB_PW:-}"
+GRD_VNC=0
+if [ -n "$VNC_PW" ]; then
+    if [ "${#VNC_PW}" -le 8 ]; then GRD_VNC=1
+    else echo "[grd] RFB_PW is ${#VNC_PW} chars; GRD VNC caps at 8 — :5900 mirror NOT armed (RDP unaffected)" >&2; fi
+fi
 
 # ---- core's system/GRD password (runtime only — never in a layer) -----------
 echo "core:${RDP_PW}" | chpasswd
@@ -84,22 +95,31 @@ unset GUAC_PW
 # up core's `systemd --user` gnome-remote-desktop-headless.service + the headless
 # GNOME-Wayland session is HOST-VALIDATED (needs cgroup-v2 delegation).
 cat > /tmp/grd-setup.sh <<'GRDEOF'
-set -e
+set -u
 export XDG_RUNTIME_DIR=/run/user/1000
-grdctl --headless rdp set-tls-cert /var/lib/guac-cert/grd-cert.pem
-grdctl --headless rdp set-tls-key  /var/lib/guac-cert/grd-key.pem
-grdctl --headless rdp set-credentials core "$GRD_RDP_PW"
-grdctl --headless rdp enable
-grdctl --headless vnc set-auth-method password
-grdctl --headless vnc set-password "$GRD_VNC_PW"
-grdctl --headless vnc enable
+fail=0
+grdctl --headless rdp set-tls-cert /var/lib/guac-cert/grd-cert.pem || { echo '[grd] rdp set-tls-cert FAILED'; fail=1; }
+grdctl --headless rdp set-tls-key  /var/lib/guac-cert/grd-key.pem  || { echo '[grd] rdp set-tls-key FAILED';  fail=1; }
+grdctl --headless rdp set-credentials core "$GRD_RDP_PW" || { echo '[grd] rdp set-credentials FAILED'; fail=1; }
+grdctl --headless rdp enable || { echo '[grd] rdp enable FAILED'; fail=1; }
+if [ "${GRD_VNC:-0}" = 1 ]; then
+    grdctl --headless vnc set-auth-method password || { echo '[grd] vnc set-auth-method FAILED'; fail=1; }
+    grdctl --headless vnc set-password "$GRD_VNC_PW" || { echo '[grd] vnc set-password FAILED'; fail=1; }
+    grdctl --headless vnc enable || { echo '[grd] vnc enable FAILED'; fail=1; }
+else
+    grdctl --headless vnc disable 2>/dev/null || true   # no valid RFB_PW -> leave the VNC mirror off
+fi
+grdctl --headless status || true   # journal-visible proof of the applied config
+exit $fail
 GRDEOF
-# RDP password = RDP_PW always; VNC password = VNC_PW (RFB_PW when set to arm the
-# tailnet-only :5900 mirror, else RDP_PW). GRD VNC :5900 is TAILNET-ONLY — it is the
-# native GRD VNC server, NOT noVNC.
-runuser -u core -- env GRD_RDP_PW="$RDP_PW" GRD_VNC_PW="$VNC_PW" XDG_RUNTIME_DIR=/run/user/1000 \
-    bash /tmp/grd-setup.sh \
-    || echo "[grd] grdctl config deferred — complete on the cgroup-delegating host (needs core's running systemd --user)"
+# Per-command guards (NOT `set -e` + one coarse "deferred"): one failing grdctl step no
+# longer aborts the rest, and the journal names WHICH step failed. grdctl persists config to
+# GKeyFile even with no running user service (live-verified: RDP enable/cert/creds DO stick),
+# so this is config-complete; bringing up the headless GNOME-Wayland SESSION behind :3389
+# (the actual painted desktop) remains HOST-VALIDATED — see THE SESSION (FAILURE 2) note.
+runuser -u core -- env GRD_RDP_PW="$RDP_PW" GRD_VNC_PW="$VNC_PW" GRD_VNC="$GRD_VNC" \
+    XDG_RUNTIME_DIR=/run/user/1000 bash /tmp/grd-setup.sh \
+    || echo "[grd] one or more grdctl steps failed — see the [grd] lines above + 'grdctl status'"
 rm -f /tmp/grd-setup.sh
 
 echo "fedora-desktop-grd configured: GRD RDP(:3389,TLS)+VNC(:5900) + Guacamole web(:8443)."
