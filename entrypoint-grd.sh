@@ -46,6 +46,28 @@ runuser -u core -- bash -c '
         mv "$t" ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
     else rm -f "$t"; fi'
 
+# ---- tailnet-only by CONSTRUCTION (defense-in-depth; parity with the xrdp lineage) --
+# The web gateway (:8443) is the ONLY public door. ssh (:22), mosh (UDP 61001-62000),
+# RDP (:3389) and VNC (:5900) are TAILNET-ONLY: run.sh.grd publishes only the web port,
+# and THIS nft rule drops those ports on every interface except lo (loopback: guacd) and
+# tailscale0 (the tailnet) — so a future `-p 22`/`-p 3389` slip can't expose GRD's
+# RDP/VNC or sshd to the public internet. Own table (never collides with fail2ban's);
+# `iifname` matches by name so it loads before tailscale0 exists; best-effort (needs
+# NET_ADMIN, granted by run.sh.grd) and `|| echo` keeps it NON-FATAL under `set -e`.
+# Byte-identical to the xrdp entrypoint's guard — previously this lineage shipped NONE
+# (NET-01 / DOC-05: "tailnet-only by construction" was an xrdp-only backstop).
+nft -f - <<'NFT' 2>/dev/null || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)"
+table inet fd_tailnet_guard {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname "lo" accept
+    iifname "tailscale0" accept
+    tcp dport { 22, 3389, 5900 } drop
+    udp dport 61001-62000 drop
+  }
+}
+NFT
+
 # ---- TLS material on the cert volume ---------------------------------------
 # GRD's RDP requires TLS (PEM cert+key — always). The Guacamole web door uses a
 # Tomcat PKCS12 keystore. Both persist on /var/lib/guac-cert.
