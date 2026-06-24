@@ -1,42 +1,48 @@
 #!/usr/bin/env bash
 # fedora-desktop — GRD lineage first-boot config (systemd oneshot, runs ONCE).
 # ============================================================================
-# Seeds core's password, syncs key-only ssh, mints TLS, configures GRD (RDP+VNC)
-# + the Apache Guacamole web door (user-mapping -> GRD's loopback RDP), and leaves
-# the headless GNOME-Wayland session + the claudebox to core's lingering
-# systemd --user manager. HEADLESS — no monitor/GPU/seat required.
+# Variant-1 "GNOME-50 turnkey" headless build — HOST-VALIDATED via
+# validation/grd-headless-spike.sh (single-user AND multi-user, on erebus 2026-06-24):
+#   per Linux user, gdm spawns a headless AUTOLOGIN session via
+#   gnome-headless-session@<user> (GDM CreateUserDisplay, NO greeter) → a real
+#   class=user logind session (portals + keyring work); the user's
+#   gnome-remote-desktop-headless.service serves NLA RDP on a DISTINCT loopback port;
+#   a SINGLE credential SSOs straight to that user's painted desktop; Apache Guacamole
+#   fronts each user's loopback port as the public :8443 door.
 #
-# Secrets reach this oneshot via the unit's EnvironmentFile (run.sh.grd writes
-# /etc/fedora-desktop/secrets.env from the podman -e vars before this runs, OR
-# podman passes them into PID 1's env which the unit imports).
-#
-# Required runtime secrets (PRINCIPLE 5):
-#   RDP_PW  — ALWAYS: core's system + GRD RDP password (the Guacamole web door
-#             single-signs-on into the loopback RDP with it).
-#   GUAC_PW — ALWAYS: the Guacamole web-login password on the PUBLIC :8443 door
-#             (use a STRONG password; brute-force lockout via guacamole-auth-ban).
-#   RFB_PW  — OPTIONAL: arms the tailnet-only GRD VNC :5900 mirror for native VNC
-#             viewers (falls back to RDP_PW when unset).
+# Secrets reach this oneshot via the unit EnvironmentFile (run.sh.grd writes
+# /etc/fedora-desktop/secrets.env). PRINCIPLE 5 — runtime only, never a layer.
+#   RDP_PW   — ALWAYS: core's system + GRD RDP credential (Guacamole SSOs core with it)
+#   GUAC_PW  — ALWAYS: core's PUBLIC Guacamole web-login password (+TOTP, +auth-ban)
+#   USER{1..5}_NAME/_PW/_ACCESS — OPTIONAL additional desktop users (multi-user)
+#   RFB_PW   — IGNORED (mode v1 native VNC mirror is a follow-up; --headless can expose it)
 set -eu
 : "${RDP_PW:?RDP_PW must be set (core system + GRD RDP password) — see run.sh.grd}"
 : "${GUAC_PW:?GUAC_PW must be set (the public Guacamole web-login password) — see run.sh.grd}"
-# GRD VNC (:5900, tailnet-only) is an optional mirror: armed by RFB_PW when set,
-# else falls back to the RDP_PW so native VNC viewers still have a usable password.
-# GRD/FreeRDP cap the VNC password at 8 chars (MAX_VNC_PASSWORD_SIZE in grd-ctl.c). The
-# strong RDP_PW (often a multi-word passphrase) MUST NOT be reused for VNC — that reuse is
-# exactly what raised "Password is too long" and aborted the whole grd-setup under set -e.
-# The :5900 VNC mirror is OPTIONAL: arm it only when RFB_PW is set AND <=8 chars; otherwise
-# leave VNC disabled (the public door is Guacamole-over-RDP regardless; native VNC is a
-# tailnet-only extra). RDP's set-credentials has no such length limit.
-VNC_PW="${RFB_PW:-}"
-GRD_VNC=0
-if [ -n "$VNC_PW" ]; then
-    if [ "${#VNC_PW}" -le 8 ]; then GRD_VNC=1
-    else echo "[grd] RFB_PW is ${#VNC_PW} chars; GRD VNC caps at 8 — :5900 mirror NOT armed (RDP unaffected)" >&2; fi
-fi
+[ -n "${RFB_PW:-}" ] && echo "[grd] RFB_PW set but native VNC is a v1 follow-up — ignoring" >&2 || true
 
-# ---- core's system/GRD password (runtime only — never in a layer) -----------
+CERTDIR=/var/lib/guac-cert
+RDP_BASE_PORT=3389            # core=:3389, USER1=:3390, … (loopback; Guacamole fronts each)
+
+# ---- core + optional additional desktop users (multi-user) ------------------
+# core (uid 1000) is the admin. USER{1..5} are non-privileged desktop users created
+# idempotently from spin-up secrets (NOT in wheel, no subuid → no podman/claudebox).
 echo "core:${RDP_PW}" | chpasswd
+# Parallel arrays. uid + port are keyed on the USERn NUMBER (1000+n / base+n), NOT the
+# array index, so they MATCH guac-db-provision's per-user port even with gaps (e.g.
+# USER1 + USER3 set, no USER2). core is index 0: uid 1000, port RDP_BASE_PORT.
+USERNAMES=(core); USERPWS=("$RDP_PW"); USERUIDS=(1000); USERPORTS=("$RDP_BASE_PORT")
+for _n in 1 2 3 4 5; do
+    eval "_un=\${USER${_n}_NAME:-}; _up=\${USER${_n}_PW:-}"
+    [ -n "$_un" ] && [ -n "$_up" ] || continue
+    case "$_un" in core|root|gdm|gnome-remote-desktop|tomcat|mysql) echo "[grd] refusing reserved username '$_un'" >&2; continue;; esac
+    echo "$_un" | grep -qE '^[a-z_][a-z0-9_-]{0,30}$' || { echo "[grd] invalid username '$_un' — skipped" >&2; continue; }
+    id "$_un" >/dev/null 2>&1 || useradd -m -u "$((1000 + _n))" -s /bin/bash "$_un"
+    echo "${_un}:${_up}" | chpasswd
+    loginctl enable-linger "$_un" >/dev/null 2>&1 || true
+    USERNAMES+=("$_un"); USERPWS+=("$_up"); USERUIDS+=("$((1000 + _n))"); USERPORTS+=("$((RDP_BASE_PORT + _n))")
+done
+loginctl enable-linger core >/dev/null 2>&1 || true
 
 # ---- key-only ssh: sync core's authorized_keys from github.com/oso-gato.keys -
 runuser -u core -- bash -c '
@@ -47,103 +53,95 @@ runuser -u core -- bash -c '
     else rm -f "$t"; fi'
 
 # ---- tailnet-only by CONSTRUCTION (defense-in-depth; parity with the xrdp lineage) --
-# The web gateway (:8443) is the ONLY public door. ssh (:22), mosh (UDP 61001-62000),
-# RDP (:3389) and VNC (:5900) are TAILNET-ONLY: run.sh.grd publishes only the web port,
-# and THIS nft rule drops those ports on every interface except lo (loopback: guacd) and
-# tailscale0 (the tailnet) — so a future `-p 22`/`-p 3389` slip can't expose GRD's
-# RDP/VNC or sshd to the public internet. Own table (never collides with fail2ban's);
-# `iifname` matches by name so it loads before tailscale0 exists; best-effort (needs
-# NET_ADMIN, granted by run.sh.grd) and `|| echo` keeps it NON-FATAL under `set -e`.
-# Byte-identical to the xrdp entrypoint's guard — previously this lineage shipped NONE
-# (NET-01 / DOC-05: "tailnet-only by construction" was an xrdp-only backstop).
+# The web gateway (:8443) is the ONLY public door. ssh (:22), mosh, and EVERY GRD RDP
+# port (:3389-:3394, one per user) are TAILNET-ONLY: run.sh.grd publishes only the web
+# port, and this nft rule drops those ports on every interface except lo + tailscale0.
 nft -f - <<'NFT' 2>/dev/null || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)"
 table inet fd_tailnet_guard {
   chain input {
     type filter hook input priority -10; policy accept;
     iifname "lo" accept
     iifname "tailscale0" accept
-    tcp dport { 22, 3389, 5900 } drop
+    tcp dport { 22, 3389-3394, 5900 } drop
     udp dport 61001-62000 drop
   }
 }
 NFT
 
-# ---- TLS material on the cert volume ---------------------------------------
-# GRD's RDP requires TLS (PEM cert+key — always). The Guacamole web door uses a
-# Tomcat PKCS12 keystore. Both persist on /var/lib/guac-cert.
-install -d -m 0751 /var/lib/guac-cert   # 0751: core traverses the tomcat-owned dir to read its RDP key
-if [ ! -f /var/lib/guac-cert/grd-cert.pem ]; then
-    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=fedora-desktop-grd" \
-        -keyout /var/lib/guac-cert/grd-key.pem -out /var/lib/guac-cert/grd-cert.pem
-    chown core:core /var/lib/guac-cert/grd-*.pem; chmod 600 /var/lib/guac-cert/grd-key.pem
-fi
-if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
+# ---- Tomcat TLS keystore for the public :8443 web door ----------------------
+install -d -m 0751 "$CERTDIR"
+if [ ! -f "$CERTDIR/keystore.p12" ]; then
     keytool -genkeypair -alias guac -keyalg RSA -keysize 2048 -validity 3650 \
         -dname "CN=fedora-desktop-grd" -storetype PKCS12 \
-        -keystore /var/lib/guac-cert/keystore.p12 -storepass container-local
-    chown tomcat:tomcat /var/lib/guac-cert/keystore.p12; chmod 640 /var/lib/guac-cert/keystore.p12
+        -keystore "$CERTDIR/keystore.p12" -storepass container-local
+    chown tomcat:tomcat "$CERTDIR/keystore.p12"; chmod 640 "$CERTDIR/keystore.p12"
 fi
+
 # ---- Guacamole web door: DB-backed auth (MariaDB) + TOTP 2FA -----------------
-# TOTP REQUIRES a database; provisioning uses the SHARED single-source helper
-# bin/guac-db-provision.sh — the four must-dos live there once, byte-identical to the
-# xrdp lineage. grd specifics: the desktop RDP tile uses security=tls (GRD's RDP is
-# TLS) and does NOT pin bpp (Wayland; no xrdp <User,BitPerPixel> session-key concern).
-# grd is single-user (core) with no FLEET_SSH / extra users -> the helper provisions
-# just core (web login GUAC_PW -> GRD's loopback RDP as core/RDP_PW).
+# Shared single-source helper (byte-identical four must-dos with the xrdp lineage).
+# grd specifics: RDP_SECURITY=any — GRD's RDP front door is NLA-authenticated (NOT the
+# Guacamole 'tls'/RDSTLS mode), so the connection must NEGOTIATE (host-validated in the
+# spike with /sec:nla). RDP_PIN_BPP=0 (Wayland; no xrdp <User,BitPerPixel> key).
+# RDP_PORT_PER_USER=1 — each user's tile dials its OWN loopback port (core 3389, USERn 3389+n).
 rm -f /etc/guacamole/user-mapping.xml   # must-do #2: a file-auth map would bypass TOTP
 if [ "${ENABLE_AUDIO:-false}" = "true" ]; then RDP_DISABLE_AUDIO=0; else RDP_DISABLE_AUDIO=1; fi
-# MariaDB runs as mariadb.service, ordered before this oneshot (install-grd.sh). Resolve
-# the client, wait for the socket defensively, then provision (FAIL CLOSED if not ready).
 MCLIENT="$(command -v mariadb || command -v mysql)"
 MADMIN="$(command -v mariadb-admin || command -v mysqladmin)"
-DBSOCK=/var/lib/mysql/mysql.sock   # Fedora's default socket — mariadb.service binds it here
-MYSQL_ROOT() { "$MCLIENT" --socket="$DBSOCK" "$@"; }   # OS-root -> DB-root via unix_socket auth
+DBSOCK=/var/lib/mysql/mysql.sock
+MYSQL_ROOT() { "$MCLIENT" --socket="$DBSOCK" "$@"; }
 _db_ready=0
 for _i in $(seq 1 60); do
     if "$MADMIN" --socket="$DBSOCK" ping >/dev/null 2>&1; then _db_ready=1; break; fi
     sleep 1
 done
 [ "$_db_ready" = 1 ] || { echo "FATAL: MariaDB (mariadb.service) not ready for provisioning" >&2; exit 1; }
-RDP_SECURITY=tls
+RDP_SECURITY=any
 RDP_PIN_BPP=0
+RDP_PORT_PER_USER=1
 . /usr/local/share/fedora-dev/bin/guac-db-provision.sh
 guac_db_provision
 unset GUAC_PW
 
-# ---- GRD config: enable RDP (TLS, loopback+tailnet) + VNC (tailnet) ----------
-# grdctl is per-user; run as core under its (lingering) user runtime. RDP serves
-# :3389 (Guacamole fronts it on loopback; native RDP clients reach it on the
-# tailnet); VNC serves :5900 (tailnet). The config contract is below; bringing
-# up core's `systemd --user` gnome-remote-desktop-headless.service + the headless
-# GNOME-Wayland session is HOST-VALIDATED (needs cgroup-v2 delegation).
-cat > /tmp/grd-setup.sh <<'GRDEOF'
-set -u
-export XDG_RUNTIME_DIR=/run/user/1000
-fail=0
-grdctl --headless rdp set-tls-cert /var/lib/guac-cert/grd-cert.pem || { echo '[grd] rdp set-tls-cert FAILED'; fail=1; }
-grdctl --headless rdp set-tls-key  /var/lib/guac-cert/grd-key.pem  || { echo '[grd] rdp set-tls-key FAILED';  fail=1; }
-grdctl --headless rdp set-credentials core "$GRD_RDP_PW" || { echo '[grd] rdp set-credentials FAILED'; fail=1; }
-grdctl --headless rdp enable || { echo '[grd] rdp enable FAILED'; fail=1; }
-if [ "${GRD_VNC:-0}" = 1 ]; then
-    grdctl --headless vnc set-auth-method password || { echo '[grd] vnc set-auth-method FAILED'; fail=1; }
-    grdctl --headless vnc set-password "$GRD_VNC_PW" || { echo '[grd] vnc set-password FAILED'; fail=1; }
-    grdctl --headless vnc enable || { echo '[grd] vnc enable FAILED'; fail=1; }
-else
-    grdctl --headless vnc disable 2>/dev/null || true   # no valid RFB_PW -> leave the VNC mirror off
-fi
-grdctl --headless status || true   # journal-visible proof of the applied config
-exit $fail
-GRDEOF
-# Per-command guards (NOT `set -e` + one coarse "deferred"): one failing grdctl step no
-# longer aborts the rest, and the journal names WHICH step failed. grdctl persists config to
-# GKeyFile even with no running user service (live-verified: RDP enable/cert/creds DO stick),
-# so this is config-complete; bringing up the headless GNOME-Wayland SESSION behind :3389
-# (the actual painted desktop) remains HOST-VALIDATED — see THE SESSION (FAILURE 2) note.
-runuser -u core -- env GRD_RDP_PW="$RDP_PW" GRD_VNC_PW="$VNC_PW" GRD_VNC="$GRD_VNC" \
-    XDG_RUNTIME_DIR=/run/user/1000 bash /tmp/grd-setup.sh \
-    || echo "[grd] one or more grdctl steps failed — see the [grd] lines above + 'grdctl status'"
-rm -f /tmp/grd-setup.sh
+# ---- per-user GRD headless sessions (variant 1, exactly the spike-proven steps) --
+# For each user: GDM spawns the headless autologin session, GRD --headless serves it on
+# the user's OWN loopback port (negotiation OFF so the port is deterministic), and the
+# single RDP credential is that user's RDP_PW/USERn_PW. Per-command guards: one failing
+# step names itself and does NOT abort the oneshot (which would block Tomcat → :8443).
+setup_grd_user() {   # <user> <uid> <port> <rdp_pw>
+    local u="$1" uid="$2" port="$3" pw="$4" cert="/home/$1/.grd-cert"
+    install -d -m 0700 -o "$u" -g "$u" "$cert"
+    if [ ! -f "$cert/cert.pem" ]; then
+        runuser -u "$u" -- openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -subj "/CN=fedora-desktop-grd-$u" -keyout "$cert/key.pem" -out "$cert/cert.pem" 2>/dev/null \
+            && chmod 600 "$cert/key.pem" || echo "[grd] $u: TLS mint FAILED" >&2
+    fi
+    systemctl enable --now "gnome-headless-session@${u}.service" 2>/dev/null \
+        || echo "[grd] $u: gnome-headless-session@ failed to start (see journalctl)" >&2
+    # configure + start GRD inside the user's own session bus. Values pass via ENV into a
+    # SINGLE-quoted body (no outer-shell interpolation) so passwords with shell metachars
+    # (quotes, $, spaces) are safe. Per-command guards keep one failure from aborting.
+    runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+        GU="$u" GP="$pw" GPORT="$port" GCERT="$cert" bash -c '
+        grdctl --headless rdp set-tls-cert "$GCERT/cert.pem" || echo "[grd] $GU rdp set-tls-cert FAILED"
+        grdctl --headless rdp set-tls-key  "$GCERT/key.pem"  || echo "[grd] $GU rdp set-tls-key FAILED"
+        grdctl --headless rdp set-credentials "$GU" "$GP"    || echo "[grd] $GU rdp set-credentials FAILED"
+        grdctl --headless rdp set-port "$GPORT" 2>/dev/null \
+            || gsettings set org.gnome.desktop.remote-desktop.rdp port "$GPORT" 2>/dev/null || true
+        grdctl --headless rdp disable-port-negotiation 2>/dev/null \
+            || gsettings set org.gnome.desktop.remote-desktop.rdp negotiate-port false 2>/dev/null || true
+        grdctl --headless rdp enable || echo "[grd] $GU rdp enable FAILED"
+        systemctl --user restart gnome-remote-desktop-headless.service 2>/dev/null \
+            || systemctl --user start gnome-remote-desktop-headless.service || echo "[grd] $GU headless.service FAILED"
+        grdctl --headless status || true' \
+        || echo "[grd] $u: grdctl --headless setup reported a failure (see [grd] lines above)"
+}
 
-echo "fedora-desktop-grd configured: GRD RDP(:3389,TLS)+VNC(:5900) + Guacamole web(:8443)."
-echo "Headless GNOME-Wayland session + the claudebox come up under core's systemd --user"
-echo "(loginctl linger is set; host-validated on a cgroup-delegating host)."
+for _i in "${!USERNAMES[@]}"; do
+    setup_grd_user "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" "${USERPORTS[$_i]}" "${USERPWS[$_i]}"
+done
+
+echo "fedora-desktop-grd configured: GRD SYSTEM-FREE headless (variant 1) for users: ${USERNAMES[*]}"
+echo "Each user = a gdm-spawned headless autologin GNOME session served by"
+echo "gnome-remote-desktop-headless on its own loopback RDP port (core :3389, USERn :338n+)."
+echo "Apache Guacamole fronts each port as the single public :8443 web door (GUAC_PW + TOTP)."

@@ -60,6 +60,7 @@ $DNF install \
     tailscale \
     gnome-shell gnome-session mutter gsettings-desktop-schemas \
     gnome-terminal nautilus \
+    gdm accountsservice python3-gobject \
     gnome-remote-desktop pipewire pipewire-libs wireplumber \
     xorg-x11-server-Xwayland mesa-dri-drivers mesa-libgbm openssl \
     ${WEB_PKGS} \
@@ -81,9 +82,29 @@ setcap cap_setgid+ep /usr/bin/newgidmap || true
 # ---- harness as systemd units ----------------------------------------------
 systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.service
 # core's LINGERING user manager hosts the nested rootless podman socket + the
-# daily-refreshed claudebox + GRD's headless session. loginctl needs a running
-# logind (absent at build) → write the linger marker directly (idempotent).
+# daily-refreshed claudebox. loginctl needs a running logind (absent at build) →
+# write the linger marker directly (idempotent). (Per-user DESKTOP sessions are
+# spawned by gdm/gnome-headless-session@ — see below — not by this marker.)
 mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/core
+
+# ---- GRD variant-1 headless desktop: gdm as session FACTORY (HOST-VALIDATED) ----
+# Each desktop user gets a headless AUTOLOGIN session spawned on demand by gdm via
+# gnome-headless-session@<user> (GDM CreateUserDisplay → NO greeter → a real
+# class=user logind session, so portals + keyring work); the user's
+# gnome-remote-desktop-headless.service serves NLA RDP on a per-user loopback port,
+# fronted by Apache Guacamole on :8443. gdm runs ONLY as the factory (no greeter on a
+# headless box; CreateUserDisplay needs no /dev/dri — mutter surfaceless llvmpipe).
+# Proven single- AND multi-user in validation/grd-headless-spike.sh. Fail-closed: the
+# units this depends on must exist (python3-gobject + accountsservice are needed by
+# gdm-headless-login-session, installed above).
+for _u in /usr/lib/systemd/system/gdm.service \
+          /usr/lib/systemd/system/gnome-headless-session@.service \
+          /usr/lib/systemd/user/gnome-remote-desktop-headless.service; do
+    [ -f "$_u" ] || { echo "FATAL: required GRD unit missing: $_u" >&2; exit 1; }
+done
+systemctl set-default graphical.target
+systemctl enable gdm.service
+systemctl --global enable gnome-remote-desktop-headless.service
 
 # ---- Obsidian: developer AppImage (class c), latest-at-build, sha256 logged --
 OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
@@ -238,15 +259,17 @@ Requires=mariadb.service fedora-desktop-grd-firstboot.service
 Environment=GUACAMOLE_HOME=/etc/guacamole
 EOF
 
-# ---- first-boot config oneshot (TLS, GRD rdp+vnc, ssh keys, claudebox) -------
+# ---- first-boot config oneshot (users, TLS, per-user GRD, DB-auth) ----------
 # entrypoint-grd.sh runs ONCE under systemd; it reads the runtime secrets from
-# the unit Environment (run.sh.grd / the Quadlet pass them). GRD itself runs in
-# HEADLESS-USER mode under core's systemd --user (no gdm) — see entrypoint-grd.
+# the unit Environment (run.sh.grd / the Quadlet pass them). It provisions core +
+# optional USER{1..5}, then per user enables gnome-headless-session@<user> + the
+# user's gnome-remote-desktop-headless on a distinct loopback port — see entrypoint-grd.
+# Ordered After=gdm.service so the session FACTORY is up before it spawns sessions.
 cat > /etc/systemd/system/fedora-desktop-grd-firstboot.service <<'EOF'
 [Unit]
-Description=fedora-desktop GRD first-boot config (TLS, GRD rdp+vnc, ssh keys, DB-auth, claudebox)
-After=systemd-user-sessions.service network-online.target mariadb.service
-Wants=network-online.target
+Description=fedora-desktop GRD first-boot config (users, TLS, per-user GRD headless, DB-auth)
+After=systemd-user-sessions.service network-online.target mariadb.service gdm.service
+Wants=network-online.target gdm.service
 Requires=mariadb.service
 [Service]
 Type=oneshot

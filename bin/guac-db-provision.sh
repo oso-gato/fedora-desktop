@@ -70,8 +70,8 @@ emit_fleet_connections_sql() {
 # One identity: entity + user (UPSERT touches ONLY password fields + re-enable; NEVER
 # guacamole_user_attribute => TOTP seed kept, must-do #4) + own RDP desktop + READ
 # grants + fleet-grant RECONCILIATION (DELETE-then-INSERT, must-do #3).
-emit_user_sql() {  # <username> <web_pw> <rdp_user> <rdp_pw> <access> <desktop_conn_name>
-    _u="$1"; _wpw="$2"; _ru="$3"; _rpw="$4"; _acc="$5"; _conn="$6"
+emit_user_sql() {  # <username> <web_pw> <rdp_user> <rdp_pw> <access> <desktop_conn_name> [<rdp_port>]
+    _u="$1"; _wpw="$2"; _ru="$3"; _rpw="$4"; _acc="$5"; _conn="$6"; _rport="${7:-3389}"
 cat <<SQL
 INSERT IGNORE INTO guacamole_entity (name, type) VALUES ($(sqlstr "$_u"), 'USER');
 SET @eid = (SELECT entity_id FROM guacamole_entity WHERE name=$(sqlstr "$_u") AND type='USER');
@@ -87,7 +87,7 @@ INSERT INTO guacamole_connection (connection_name, parent_id, protocol)
 SET @cid = (SELECT connection_id FROM guacamole_connection WHERE connection_name=$(sqlstr "$_conn") AND parent_id=@grp);
 SQL
     emit_param_sql '@cid' hostname 127.0.0.1
-    emit_param_sql '@cid' port 3389
+    emit_param_sql '@cid' port "$_rport"
     emit_param_sql '@cid' username "$_ru"
     emit_param_sql '@cid' password "$_rpw"
     emit_param_sql '@cid' ignore-cert true
@@ -188,11 +188,17 @@ SQL
     {
         emit_group_sql
         emit_fleet_connections_sql
-        emit_user_sql core "${GUAC_PW}" core "${RDP_PW}" all "fedora-desktop"
+        # Per-user RDP port: xrdp shares :3389 (sesman routes by username). grd sets
+        # RDP_PORT_PER_USER=1 — GRD has no single-port username router, so each user gets
+        # their OWN loopback port (base 3389, USERn -> 3389+n; matches entrypoint-grd's
+        # per-user gnome-remote-desktop-headless). Default (unset) keeps xrdp on :3389.
+        _baseport=3389
+        emit_user_sql core "${GUAC_PW}" core "${RDP_PW}" all "fedora-desktop" "$_baseport"
         for _w in 1 2 3 4 5; do
             eval "_wn=\${USER${_w}_NAME:-}; _wp=\${USER${_w}_PW:-}; _wa=\${USER${_w}_ACCESS:-none}"
             [ -n "$_wn" ] && [ -n "$_wp" ] || continue
-            emit_user_sql "$_wn" "$_wp" "$_wn" "$_wp" "$_wa" "desktop-$_wn"
+            _uport="$_baseport"; [ "${RDP_PORT_PER_USER:-0}" = 1 ] && _uport="$((_baseport + _w))"
+            emit_user_sql "$_wn" "$_wp" "$_wn" "$_wp" "$_wa" "desktop-$_wn" "$_uport"
         done
         emit_disable_absent_sql $CURRENT_USERS
     } | MYSQL_ROOT guacamole_db || { echo "FATAL: Guacamole DB provisioning failed" >&2; exit 1; }
