@@ -257,15 +257,18 @@ WRONG TOOL for a headless RDP door, not merely unproven. (An earlier draft of th
 | Lineage (file) | Init | Desktop | RDP server | VNC server | size | Validation |
 |---|---|---|---|---|---|---|
 | **xrdp** (`Containerfile`) | supervised bash PID-1 (no systemd) | XFCE on **X11** (`DESKTOP_ENV=xfce`, sole variant) | xrdp | `x0vncserver` (TigerVNC) | ~3.65 GB | full (build→run→probe) — **the proven, production lineage** |
-| **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD native (FreeRDP) | GRD native (libvncserver) | 3.98 GB | assembly-validated; runtime **EXPERIMENTAL — headless GNOME-Wayland UNPROVEN** |
+| **grd** (`Containerfile.grd`) | **systemd-PID-1** | GNOME-50 **Wayland** / GRD | GRD `--headless` per user (gdm-spawned autologin session, NLA) | — (v1; native VNC a follow-up) | 3.98 GB | **host-validated** (single- + multi-user paint+SSO+resume via `validation/grd-headless-spike.sh`); full-lineage deploy-validation pending |
 
 **Disclosed hard-dep closure (Principle 3 — "minimum relative to capability"; irreducible, NOT bloat):**
 - **grd:** `gnome-shell` hard-pulls `webkitgtk6.0` + `webkit2gtk4.1` (~182 MiB: captive-portal
-  helper + evolution-data-server) + `gnome-control-center`.
-- grd's native VNC server is **libvncserver-backed (Tight+JPEG, ZRLE)** — the optional tailnet :5900
-  native-VNC mirror is bandwidth-comparable to the xrdp/TigerVNC path (libvncserver's Tight is
-  somewhat less finely tuned than TigerVNC's — a disclosed, order-of-magnitude-equal difference).
-  The public :8443 door is Guacamole-over-RDP on both lineages.
+  helper + evolution-data-server) + `gnome-control-center`. **The turnkey headless build also adds
+  `gdm` (the session FACTORY for `gnome-headless-session@<user>`; runs no greeter on a headless box),
+  `accountsservice` + `python3-gobject` (`gdm-headless-login-session` is a PyGObject script that needs
+  them).** These are the irreducible cost of GDM-spawned per-user headless autologin sessions — the
+  ONLY GRD path that gives a real `class=user` logind session (portals + keyring), disclosed not bloat.
+- The public :8443 door is Guacamole-over-RDP on both lineages. **grd v1 has no native VNC mirror**
+  (the per-user `--headless` daemons serve RDP; a tailnet `:5900x` VNC mirror is a follow-up — `grdctl
+  --headless vnc` can expose it per user).
 
 **systemd-PID-1 = STOP-AND-SURFACE (grd only).** The grd lineage requires the HOST to grant cgroup-v2
 delegation + a writable `/sys/fs/cgroup` — a wider host-trust ask than the xrdp lineage. It deploys
@@ -275,24 +278,23 @@ in the nested build engine, so local validation is **assembly-only** (`podman cr
 (GNOME-Wayland under `mutter --headless`, GRD under core's `systemd --user`) are **host-validated**
 on a delegating host.
 
-**grd is EXPERIMENTAL — not ship-ready; xrdp is the only proven path.** (An earlier draft wrongly
-called grd "canonical" — corrected against L1.) GNOME Remote Desktop has TWO headless modes:
-(a) `grdctl --headless` + `gnome-remote-desktop-headless.service` = the *Desktop Sharing* path, which
-connects to an **already-running** "independently set up headless graphical user session" (it does
-NOT spawn one); (b) `grdctl --system` + GDM = *Remote Login*, the SYSTEM service whose GDM
-`CreateRemoteDisplay` spawns a headless `mutter` on connect. **grd currently uses mode (a) but ships
-NO gdm, starts no `mutter`/`gnome-session`, and never enables `gnome-remote-desktop-headless.service`**
-— so on connect there is no compositor behind the loopback RDP/VNC: a black/refused desktop, while
-the guacamole healthcheck still reports 200 off Tomcat's page. **Corrected vs an earlier draft:
-GRD 47+ / GNOME-50 added PERSISTENT Remote Login** — a `--system` session survives disconnect and
-resumes "from where you left off", with multiple users reachable via GDM, so mode (b) is a legitimate
-modern multi-user persistent-resume path, NOT the fresh-session-per-connect it was on GNOME ≤46
-(L2 — verify against GNOME's own gnome-remote-desktop release notes before relying on it). To make grd
-real, pick ONE: convert to the turnkey `--system`+GDM Remote Login mode (add gdm, `grdctl --system`,
-enable `gnome-remote-desktop.service`), OR keep `--headless` and ALSO wire a `gnome-session`/`mutter
---headless` unit + enable `gnome-remote-desktop-headless.service`. Until host-validated on a
-delegating host, grd is EXPERIMENTAL — deploy **xrdp (X11) for production**; grd is a follow-up gated
-on host validation.
+**grd uses the GNOME-50 "turnkey headless" build — HOST-VALIDATED (single- AND multi-user) via
+`validation/grd-headless-spike.sh` on a cgroup-v2-delegating host.** The mechanism: per Linux user,
+**gdm** acts purely as a session *factory* — `gnome-headless-session@<user>.service` runs
+`gdm-headless-login-session --user=<user>` → GDM `CreateUserDisplay` sets `autologin-user` → a headless
+**autologin** GNOME session with **NO greeter** and a real `class=user` logind session (so portals +
+keyring work). The user's `gnome-remote-desktop-headless.service` then serves **NLA** RDP on that user's
+OWN loopback port (`grdctl --headless`, `set-port` base 3389 / USERn → 3389+n, port-negotiation OFF),
+and Apache Guacamole fronts each port as the single public :8443 door. A **single** credential SSOs
+straight to the user's painted desktop; reconnect resumes the same session. Proven facts from the spike:
+mutter paints **surfaceless on llvmpipe with no `/dev/dri`/seat**; gdm starts seatless ("no primary GPU,
+proceeding"); GDM creates **concurrent** `CreateUserDisplay` sessions for distinct users (the "one
+graphical session at a time" limit does NOT apply to headless RemoteDisplay); `--device /dev/fuse` is
+required (GRD clipboard) — run.sh.grd passes it. (NOT used: the rejected `--system`+GDM **Remote Login**
+mode, whose greeter is a second login and whose `AutomaticLogin` pins one user — that is a different,
+greeter-based topology; this build is the *single-user-headless* mode replicated per user.) Persistent
+disconnect-resume in GRD landed in **GNOME 47** (hardened in 50). Still ship **xrdp (X11) for
+production** until the grd lineage rewrite is itself deploy-validated end-to-end through Guacamole.
 
 ## MULTI-USER (core admin + up to 5 additional users, per-user fleet access)
 
@@ -323,7 +325,9 @@ grants:** a `dev`/`host` tile reaches that box over the desktop's tailnet via ke
 Tailscale-SSH = a **`core` (admin) shell** there — so granting `dev`/`host` is an admin-level
 grant, NOT a sandboxed login (per-user identities on dev/host would need accounts provisioned
 there — a cross-repo follow-up). Each user's web password == their OS password (one credential;
-SSO) **plus their TOTP second factor**. (grd is single-user: core only.)
+SSO) **plus their TOTP second factor**. (grd is now multi-user too: core + USER1..5, each a
+gdm-spawned per-user headless GNOME session served by its own `gnome-remote-desktop-headless` on its
+own loopback RDP port — base 3389, USERn → 3389+n; host-validated for 2 concurrent users.)
 
 **CROSS-DEVICE PERSISTENT RESUME — the bpp=24 INVARIANT (binding).** Each user gets ONE
 xrdp session that survives disconnect (`KillDisconnected=false`) and RESUMES from any device.
@@ -407,8 +411,8 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | run.sh | manual deploy contract (`podman run -d` with --health-cmd, devices, volumes, restart, the public-only publish set + runtime secrets); fallback for non-systemd hosts. **CONTROL-PLANE (security flags + publish set)** |
 | fedora-desktop.container | systemd Quadlet (Pull=missing, Notify=healthy, AutoUpdate=registry, HealthCmd, the three Volumes, SecurityLabelDisable=true, the public-only PublishPort set, commented Secret= lines). **CONTROL-PLANE** |
 | Containerfile.grd | **grd lineage** base image (GNOME-Wayland / GRD; `FROM fedora:ARG`; ARGs `GUAC_VERSION`/`GUAC_GPG_FP`; runs install-grd.sh; COPYs entrypoint-grd + the shared box seed; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
-| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD (RDP+VNC) + the Guacamole web door (guacd/Tomcat/.war + the GPG-verified guacamole-auth-ban extension). Enables sshd/rsyslog/fail2ban/tailscaled + the web units + the firstboot oneshot; sets core linger; bakes lineage=grd |
-| entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): core password, ssh-key sync, GRD TLS PEM, Guacamole web door via DB-auth+TOTP (waits on `mariadb.service`, sources the shared `guac-db-provision.sh`; `security=tls`, no bpp pin; core-only), `grdctl` rdp+vnc config (RDP=RDP_PW; VNC=RFB_PW arms the optional tailnet mirror). Session bringup is HOST-VALIDATED |
+| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD + the Guacamole web door (guacd/Tomcat/.war + GPG-verified guacamole-auth-ban). **Variant-1 turnkey:** installs `gdm`/`accountsservice`/`python3-gobject`, enables sshd/rsyslog/fail2ban/tailscaled + the web units + `gdm.service` + the firstboot oneshot, `systemctl set-default graphical.target`, `--global enable gnome-remote-desktop-headless.service`, fail-closed-asserts the GRD units exist; sets core linger; bakes lineage=grd |
+| entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): provisions core + optional USER1..5; per-user TLS PEM; Guacamole web door via DB-auth+TOTP (waits on `mariadb.service`, sources `guac-db-provision.sh`; **`security=any`** [GRD is NLA], no bpp pin, `RDP_PORT_PER_USER`); then PER USER enables `gnome-headless-session@<user>` + configures `grdctl --headless` (set-credentials + per-user `set-port` 3389+n, negotiation off) + starts the user `gnome-remote-desktop-headless.service`. Host-validated recipe (validation/grd-headless-spike.sh) |
 | run.sh.grd | grd deploy contract (`--systemd=always --cgroupns=host -v /sys/fs/cgroup`); secrets RDP_PW+GUAC_PW (RFB_PW optional) + the `/guacamole/` health path; secrets via bind-mounted `/etc/fedora-desktop/secrets.env`. **CONTROL-PLANE** + STOP-AND-SURFACE (needs a cgroup-v2-delegating host) |
 | distrobox.ini | claudebox manifest: image pin, `pre_init_hook` drops Anthropic `latest`-channel `.repo`, `additional_packages` |
 | claudebox-init.sh | post-assemble host bridges (CONTAINER_HOST export + in-box `claudebox-rebuild` flag-writer) over the quote-safe `podman exec` channel |
