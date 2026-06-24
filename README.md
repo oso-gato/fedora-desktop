@@ -32,6 +32,18 @@ Claude is the writer, you are the director.
   can read. The real protection is that the **risky step — chewing on untrusted web content —
   runs in a throwaway sandbox with no keys, no vault, and no internet.**
 
+## Where this sits — the fleet
+
+**This repo is the `fedora-desktop` box** of a three-box swarm — **the application box** (knowledge-work + its own toolset; PR-only). Full map: **[FLEET.md](FLEET.md)**.
+
+| Box | Role | Builds? | Merges? | Operates host? | Spin up |
+|-----|------|:--:|:--:|:--:|---------|
+| **fedora-dev** | develop · build · **merge** | ✅ nested | ✅ **(sole merger)** | ❌ | `./spin-up.sh` |
+| **fedora-bootstrap** | operate host · live-diagnose → PR | ❌ (CI) | ❌ PR-only | ✅ incl. create/remove | `./day0.sh` (Day-0) |
+| **fedora-desktop** *(this one)* | knowledge-work + own toolset → PR | ❌ (CI) | ❌ PR-only | ❌ | `./spin-up.sh` |
+
+This box **opens PRs only — it never merges or self-deploys**; `fedora-dev` merges on Arthur's **clickable APPROVE**. See [FLEET.md](FLEET.md) for the handoff + boundaries.
+
 ## Purpose
 
 `fedora-desktop` is Arthur's **personal remote workstation** — one desktop, two functions:
@@ -78,7 +90,7 @@ metapackage traps) lives in [CLAUDE.md](CLAUDE.md).
 | 3 | MINIMAL | dnf with `--setopt=install_weak_deps=False`; install the **leaf** package, never a convenience metapackage (weak-dep blocking does NOT stop a metapackage's hard Requires — e.g. `fail2ban` hard-pulls firewalld + esmtp; we install `fail2ban-server`). Every package gets a justifying row in the Packages table; a package without a row is a violation. |
 | 4 | VERIFY FIRST | Before adopting/bumping any source or pin, fact-check it against the live source. Gate risky installs in a scratch container before editing build files. |
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. User is the generic `core` (uid 1000). `RDP_PW` / `GUAC_PW` (required) + `RFB_PW` / `TS_AUTHKEY` (optional) enter ONLY at runtime; the entrypoint fails fast when a required one is missing. |
-| 6 | PINS | Vendor/Apache artifact versions are Containerfile `ARG`s (`GUAC_VERSION`, `JEEMIG_VERSION`, `RCLONE_VERSION`) or pinned in `distrobox.ini`; bump there only, after a rule-4 check. (Obsidian is intentionally latest-at-build, sha256-logged.) |
+| 6 | PINS | The Apache `GUAC_VERSION` + its `GUAC_GPG_FP` are Containerfile `ARG`s (the `.war` + the auth-ban/-jdbc/-totp extensions all ride them); bump there only, after a rule-4 check. rclone + tomcat-jakartaee-migration are Fedora class-(a) packages — no version pin. (Obsidian is intentionally latest-at-build, sha256-logged.) |
 | 7 | DEPLOY CONTRACT | `run.sh` is the only sanctioned way to run the image: it carries the runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the **port-publish set**. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. Sensitive ports (RDP/VNC + password-auth) stay tailnet-only — never `-p`. |
 | 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. A **control-plane diff-guard** fails any PR touching guardrail files without an explicit waiver label. The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)`, functional-probe each access path (web/RDP/VNC/ssh + sync). Final proof is CI green + a host-side deploy. |
@@ -149,14 +161,14 @@ cloud is rclone-only.
 | code | apps | b | VS Code — the maintainer-dev editor. Official Microsoft yum repo (`gpgcheck=1`) |
 | 1password | apps | b | 1Password GUI — credential vault. Official 1Password dnf repo (`gpgcheck=1`, `repo_gpgcheck=1`) |
 | 1password-cli | apps | b | 1Password CLI (`op`) — scripted secret retrieval. Same 1Password repo |
-| rclone | sync | c | the ONLY cloud-sync engine (NON-vault Google Drive + OneDrive; mount + delete-guarded bisync). Pinned developer rpm `RCLONE_VERSION` (no abraunegg `onedrive` daemon) |
+| rclone | sync | a | the ONLY cloud-sync engine (NON-vault Google Drive + OneDrive; mount + delete-guarded bisync). From Fedora's OWN repo (class-(a), signed; no version pin) — the unsigned developer rpm was dropped per the zero-base check. No abraunegg `onedrive` daemon |
 | Obsidian | apps | c | the vault editor — primary knowledge-work interface. Developer AppImage, latest-at-build, sha256 logged → `/opt/obsidian` + a `.desktop` (no rpm exists) |
-| guacamole.war | remote-access | c | the Guacamole webapp on :8443. Official Apache `.war` pinned by `GUAC_VERSION`, GPG-verified against the pinned Apache key (`GUAC_GPG_FP`), converted javax→jakarta with Apache's `jakartaee-migration` (Fedora ships only Tomcat 10.1). No rpm exists |
+| guacamole.war | remote-access | c | the Guacamole webapp on :8443. Official Apache `.war` pinned by `GUAC_VERSION`, GPG-verified against the pinned Apache key (`GUAC_GPG_FP`), converted javax→jakarta with Fedora's class-(a) `tomcat-jakartaee-migration` (Fedora ships only Tomcat 10.1). No rpm exists |
 | guacamole-auth-ban | remote-access | c | brute-force lockout on the PUBLIC :8443 door — a second Apache Guacamole `.jar` extension (same `GUAC_VERSION`, same pinned key `GUAC_GPG_FP`, same fetch+GPG-verify+extract pattern) dropped into `/etc/guacamole/extensions/`. What makes a single strong `GUAC_PW` a defensible public door (a password with no lockout is brute-forceable). No rpm exists |
 | guacamole-auth-jdbc | remote-access | c | the MySQL JDBC auth backend — moves the public door to MariaDB so TOTP 2FA can store enrollment seeds. Third Apache `.jar` extension (same key/pattern). Only the `mysql/` jar is installed + only `001-create-schema.sql` is stashed; the `002` guacadmin backdoor is never shipped/loaded. No rpm exists |
 | guacamole-auth-totp | remote-access | c | TOTP / Google-Authenticator 2FA on the public door (QR at first login, seed in the DB). Fourth Apache `.jar` extension (same key/pattern). No rpm exists |
 | mariadb-server / mariadb / mariadb-java-client | remote-access | a | the DB the public door authenticates against (TOTP needs a DB), its client, and the JDBC driver Guacamole loads from `/etc/guacamole/lib`. Fedora **leaf** packages; the DB binds **127.0.0.1 only** (3306 never published) and runs under the supervised-bash watchdog (xrdp) or as `mariadb.service` (grd) |
-| jakartaee-migration | (build tool) | c | Apache's own converter (pinned `JEEMIG_VERSION`) used at build time to make `guacamole.war` Tomcat-10-compatible; not installed into the image |
+| tomcat-jakartaee-migration | (build tool) | a | Fedora's class-(a) `javax2jakarta` converter used at build time to make `guacamole.war` Tomcat-10-compatible (replaces the old curl'd shaded jar); not installed into the running image |
 
 ### Box packages
 
@@ -407,11 +419,11 @@ non-zero on any death (the outer `--restart=always` heals).
   pull/recreate/rollback via the workload-refresh harness) — don't hand-roll `podman
   stop/rm/run` against the running box.
 - **TOTP break-glass (lost authenticator)** — clear a user's enrollment so their NEXT login
-  re-shows the QR. Host-side: `podman exec -u 0 fedora-desktop mariadb --socket=/run/mysqld/mysqld.sock guacamole_db -e "DELETE FROM guacamole_user_attribute WHERE attribute_name LIKE 'guac-totp-key-%' AND user_id=(SELECT user_id FROM guacamole_user JOIN guacamole_entity USING(entity_id) WHERE name='core');"`
+  re-shows the QR. Host-side: `podman exec -u 0 fedora-desktop mariadb --socket=/var/lib/mysql/mysql.sock guacamole_db -e "DELETE FROM guacamole_user_attribute WHERE attribute_name LIKE 'guac-totp-key-%' AND user_id=(SELECT user_id FROM guacamole_user JOIN guacamole_entity USING(entity_id) WHERE name='core');"`
   Keep a recovery admin enrolled on a separate device so you are never locked out of the only door.
 - **The DB is stateful — BACK IT UP.** All web logins **and TOTP seeds** live in the
   `/var/lib/mysql` volume (`fedora-desktop-db`). **Losing that volume = losing every enrollment**
-  (everyone re-enrolls at next login). Snapshot with `podman exec -u 0 fedora-desktop sh -c 'mariadb-dump --socket=/run/mysqld/mysqld.sock guacamole_db' > guacamole_db.sql`.
+  (everyone re-enrolls at next login). Snapshot with `podman exec -u 0 fedora-desktop sh -c 'mariadb-dump --socket=/var/lib/mysql/mysql.sock guacamole_db' > guacamole_db.sql`.
   A dead/corrupt DB surfaces as **unhealthy** (it's in the watchdog) rather than a silent total lockout.
 
 ## Notes
