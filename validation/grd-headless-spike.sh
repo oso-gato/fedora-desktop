@@ -126,6 +126,7 @@ run_container() {
       --systemd=always --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
       --shm-size=512m --security-opt label=disable \
       --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+      --device /dev/fuse \
       -v "${CT}-home":/home/core \
       -p "127.0.0.1:${HOSTPORT}:3389" \
       "$IMG" >/dev/null || { err "[$1] container failed to start"; return 1; }
@@ -252,22 +253,35 @@ probe_paint() {
   # Minimal, FreeRDP2/3-portable args. NO '+auth-only' (default is a full session — what
   # we want to capture); '+auth-only:off' was invalid syntax that made the client reject
   # its own command line and never connect.
+  # Minimal args; NO +clipboard (it forces GRD's FUSE-clipboard path, which aborts the
+  # daemon when /dev/fuse is absent). GFX_TWEAK lets you force a codec to dodge the
+  # FreeRDP 'WITH_GFX_AV1=ON [experimental] might crash' server path (e.g. /gfx:avc444).
   DISPLAY=:99 "$frdp" /v:127.0.0.1:"$HOSTPORT" /u:core /p:"$TESTPW" /cert:ignore /sec:nla \
-      /size:1280x720 +clipboard > "$od/freerdp.log" 2>&1 & local rpid=$!
+      /size:1280x720 ${GFX_TWEAK:-} > "$od/freerdp.log" 2>&1 & local rpid=$!
   sleep 14
   DISPLAY=:99 import -window root "$od/frame.png" >/dev/null 2>&1 || true
   kill "$rpid" "$xpid" >/dev/null 2>&1
   local sd=0; [ -s "$od/frame.png" ] && sd=$(convert "$od/frame.png" -colorspace Gray -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
   echo "$sd" > "$od/frame-stddev.txt"
+  # Pull the GRD daemon's OWN post-connect log from inside the container — catches a
+  # crash-on-connect, which presents to the client as a black frame / disconnect.
+  podman exec "$2" journalctl --no-pager _UID=1000 > "$od/session-journal.txt" 2>/dev/null || true
+  local grd_crash=0
+  grep -qiE 'gnome-remote-desktop.*(code=dumped|status=6/ABRT|core-dump)' "$od/session-journal.txt" && grd_crash=1
   if awk "BEGIN{exit !($sd > 0.02)}"; then
     RESULT["$v:D"]=PASS; log "[$v] Gate D: NON-BLACK desktop frame rendered (stddev=$sd) — IT PAINTS + SSO works"
+  elif [ "$grd_crash" = 1 ]; then
+    RESULT["$v:D"]=FAIL
+    warn "[$v] Gate D: GRD daemon CRASHED on connect (core-dump) — that is the black frame's cause, NOT capture."
+    warn "          See $od/session-journal.txt. Likely the FreeRDP 'WITH_GFX_AV1=ON [experimental]'"
+    warn "          GFX path — retry with GFX_TWEAK='/gfx:avc444' (or '/gfx:rfx', or '-gfx')."
   elif grep -qiE 'invalid sigil|^usage:|failed at index|/usr/bin/.*free.*rdp - ' "$od/freerdp.log"; then
     RESULT["$v:D"]=SKIP
-    warn "[$v] Gate D INCONCLUSIVE: the freerdp client rejected its own arguments (version quirk) and never connected — NOT a desktop result. See $od/freerdp.log; try the manual connect below."
+    warn "[$v] Gate D INCONCLUSIVE: the freerdp client rejected its own arguments (version quirk) and never connected — NOT a desktop result. See $od/freerdp.log."
     printf '        DISPLAY=:99 %s /v:127.0.0.1:%s /u:core /p:%s /cert:ignore /size:1280x720\n' "$frdp" "$HOSTPORT" "$TESTPW"
   elif grep -qiE 'connected to|negotiat|channel|licens|server redirect|surface|gfx' "$od/freerdp.log"; then
     RESULT["$v:D"]=FAIL
-    warn "[$v] Gate D: client CONNECTED but captured frame is black (stddev=$sd) — session may be empty / no virtual monitor, OR the WM-less Xvfb capture missed the window. Eyeball $od/frame.png; see $od/freerdp.log."
+    warn "[$v] Gate D: client CONNECTED but captured frame is black (stddev=$sd) — session may be empty / no virtual monitor, OR the WM-less Xvfb capture missed the window. Eyeball $od/frame.png; see $od/freerdp.log + $od/session-journal.txt."
   else
     RESULT["$v:D"]=FAIL
     warn "[$v] Gate D: client did not connect (stddev=$sd) — see $od/freerdp.log (auth/security/port)."
