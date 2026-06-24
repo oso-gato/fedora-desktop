@@ -63,6 +63,12 @@ RUN dnf -y --setopt=install_weak_deps=False install \
 # (core, u1, ...) inherits it — mirrors production entrypoint.sh, which writes ~/.Xclients
 # from /etc/fedora-desktop/xsession. Without this the WM exits in 0s ("exited quickly").
 RUN printf 'startxfce4\n' > /etc/skel/.Xclients && chmod +x /etc/skel/.Xclients
+# D-Bus machine-id: startxfce4 triggers D-Bus X11 *autolaunch*, which keys the session bus
+# on (machine-id, display). With no machine-id every component autolaunches its OWN bus ->
+# "another instance took over" + "connection is closed" flood -> the session aborts (exit
+# 134). Mirrors production install.sh:564 (`dbus-uuidgen --ensure`), which has the same need
+# on the no-systemd harness.
+RUN dbus-uuidgen --ensure
 # xrdp RSA keys + a self-signed TLS cert (xrdp.ini default paths). xrdp DROPS PRIVS to
 # the 'xrdp' user before reading these, so cert/key/rsakeys MUST be owned by it — else
 # TLS is refused ('Cannot read private key file ... Permission denied') AND the classic-RDP
