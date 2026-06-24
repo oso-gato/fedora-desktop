@@ -23,6 +23,19 @@ NUSERS=4 ./validation/xrdp-headless-spike.sh   # core + u1..u3
 **PASS** = `A/C:3389 PASS` + every user `paint=PASS` + one `:1x` per user in the session list.
 (The grd session primitive is already proven: `./validation/grd-headless-spike.sh` + `NUSERS=3 …`.)
 
+**VALIDATED GREEN on erebus 2026-06-24** (NUSERS=2): core + u1 each painted their own XFCE
+`:1x` over the shared `:3389`, live `xfwm4`+`xfce4-panel` per user. Getting there surfaced a
+**load-bearing dependency for the desktop to paint at all on Fedora 44**: SVG icons now decode
+via `glycin` inside a **`bwrap` sandbox**, which needs the container security flags
+(`--security-opt label=disable` + `--cap-add SYS_ADMIN` + `--device /dev/fuse`) — without them
+GTK can't load an icon, hits `g_error()`, and the whole XFCE session **aborts (exit 134)**.
+Both production deploy paths already carry these (`run.sh:108-113`, the Quadlet's
+`SecurityLabelDisable=true`/`AddCapability=…SYS_ADMIN`/`AddDevice=/dev/fuse`). **Treat them as
+desktop-critical, not just nested-podman plumbing — a future "SELinux hardening" that drops
+`label=disable` would silently stop the desktop painting.** (The other three spike fixes —
+xrdp key ownership, `~/.Xclients`, `dbus-uuidgen` machine-id — are things production already
+does; they were throwaway-image gaps, not product gaps.)
+
 ---
 
 ## B — real-deploy validation (the go-live gate)
