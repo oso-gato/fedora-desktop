@@ -80,9 +80,15 @@ require_podman() { command -v podman >/dev/null || { err "podman not found — r
 
 # ---- 1. build a minimal Fedora/GNOME/GRD systemd image ---------------------
 build_image() {
-  if podman image exists "$IMG"; then log "image $IMG exists (set IMG= or 'podman rmi $IMG' to rebuild)"; return; fi
+  if podman image exists "$IMG"; then log "image $IMG exists (set IMG= or 'podman rmi $IMG' to rebuild)"; return 0; fi
   log "building $IMG (minimal GNOME-$([ "$FED" = 44 ] && echo 50) + GRD + gdm; a few minutes)…"
-  podman build -t "$IMG" -f - . >/dev/null <<EOF
+  local cf pol rc; cf="$(mktemp)"; pol="$(mktemp)"
+  # Some hosts harden /etc/containers/policy.json to REJECT unsigned images (the
+  # fedora-desktop hosts require cosign-signed images). The upstream Fedora base used by
+  # this THROWAWAY spike is unsigned, so pass a permissive signature policy SCOPED TO
+  # THIS BUILD ONLY — the host's standing /etc/containers/policy.json is NOT modified.
+  printf '%s' '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}' > "$pol"
+  cat > "$cf" <<EOF
 FROM registry.fedoraproject.org/fedora:${FED}
 RUN dnf -y --setopt=install_weak_deps=False install \
         systemd systemd-pam iproute procps-ng \
@@ -97,7 +103,18 @@ RUN useradd -u 1000 -m -s /bin/bash core \
 RUN printf 'LIBGL_ALWAYS_SOFTWARE=1\nGALLIUM_DRIVER=llvmpipe\n' >> /etc/environment
 ENTRYPOINT ["/sbin/init"]
 EOF
-  log "image built."
+  podman build --signature-policy="$pol" -t "$IMG" -f "$cf" . 2>&1 | tee "$OUTDIR/build.log"
+  rc=${PIPESTATUS[0]}
+  rm -f "$cf" "$pol"
+  if [ "$rc" != 0 ] || ! podman image exists "$IMG"; then
+    err "image build FAILED (rc=$rc) — see $OUTDIR/build.log."
+    err "Most common cause on a hardened host: the base pull is rejected by"
+    err "/etc/containers/policy.json. Check it with:  cat /etc/containers/policy.json"
+    err "(this build already passes a permissive policy scoped to itself; if it still"
+    err " fails, the host may block the registry entirely or have no network egress)."
+    return 1
+  fi
+  log "image built."; return 0
 }
 
 # ---- 2. run a container that mirrors run.sh.grd's seatless/no-GPU contract --
@@ -251,7 +268,7 @@ probe_paint() {
 require_podman
 mkdir -p "$OUTDIR"
 log "spike start | FED=$FED VARIANTS='$VARIANTS' HOSTPORT=$HOSTPORT OUT=$OUTDIR"
-build_image
+build_image || { err "ABORT: base image did not build — the paint primitive was NOT tested."; exit 3; }
 for v in $VARIANTS; do
   echo "----------------------------------------------------------------------"
   if run_container "$v"; then
@@ -273,14 +290,21 @@ for v in $VARIANTS; do
   [ "${RESULT["$v:D"]:-}" = PASS ] && overall=0
 done
 echo "======================================================================"
+ran_any=0; for v in $VARIANTS; do [ "${RESULT["$v:A"]:-}" = PASS ] && ran_any=1; done
 if [ "$overall" = 0 ]; then
   log "VERDICT: the shared primitive WORKS for at least one build — a headless GNOME"
   log "         session paints behind loopback RDP in this container. Proceed to wire"
   log "         the winning build into the grd lineage (then add Guacamole security=any,"
   log "         TOTP, per-user ports). Gate D = the proof; check grd-spike-out/v*/frame.png."
+elif [ "$ran_any" = 0 ]; then
+  err  "VERDICT: INFRASTRUCTURE FAILURE — no container even reached systemd (Gate A all '-')."
+  err  "         The paint primitive was NOT tested; this is NOT a grd finding. Inspect"
+  err  "         $OUTDIR/build.log + $OUTDIR/v*/container.log. Likely: image/policy (see"
+  err  "         above), or cgroup-v2 delegation missing (rootless: add the user@ Delegate="
+  err  "         drop-in from HOST-VALIDATION-PROCESS.md, then re-run)."
 else
-  err  "VERDICT: NO build painted a desktop (Gate D). The dominant shared risk is REAL"
-  err  "         in this container shape. Inspect grd-spike-out/v*/{journal,freerdp,ss}.txt:"
+  err  "VERDICT: a container ran but NO build painted a desktop (Gate D). The dominant shared"
+  err  "         risk is REAL in this container shape. Inspect grd-spike-out/v*/{journal,freerdp,ss}.txt:"
   err  "         common causes — gdm seat0/CanGraphical refusal (variant 1), gnome-shell"
   err  "         --headless not coming up under systemd --user (variant 2; tune"
   err  "         GNOME_SHELL_HEADLESS=), mutter no surfaceless EGL with no /dev/dri (may"
