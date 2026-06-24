@@ -94,7 +94,7 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         systemd systemd-pam iproute procps-ng \
         gnome-shell gnome-session mutter gsettings-desktop-schemas \
         gnome-remote-desktop pipewire pipewire-libs wireplumber \
-        gdm mesa-dri-drivers mesa-libgbm openssl \
+        gdm accountsservice python3-gobject mesa-dri-drivers mesa-libgbm openssl \
     && dnf clean all
 # 'core' (uid 1000) with linger pre-marked — the lineage's user
 RUN useradd -u 1000 -m -s /bin/bash core \
