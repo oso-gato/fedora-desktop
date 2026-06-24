@@ -63,8 +63,10 @@ KEEP="${KEEP:-0}"                                  # KEEP=1 leaves the last cont
 # The exact gnome-shell headless invocation is one of the UNPROVEN bits — tune here:
 GNOME_SHELL_HEADLESS="${GNOME_SHELL_HEADLESS:-/usr/bin/gnome-shell --headless --wayland --mode=user}"
 
+NUSERS="${NUSERS:-0}"                              # >=2 runs the MULTI-USER test (variant 1) instead of single-user variants
 CT=""                                             # current container name (for cleanup)
 declare -A RESULT                                 # "variant:gate" -> PASS/FAIL/SKIP
+declare -A MU_RES                                 # multi-user: "<user>" -> PASS/FAIL/SKIP
 
 log()  { printf '\033[1;36m[spike]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[spike] WARN:\033[0m %s\n' "$*" >&2; }
@@ -288,9 +290,107 @@ probe_paint() {
   fi
 }
 
+# ---- capture one RDP frame from the host (shared) — echoes the grayscale stddev ----
+capture_frame() {  # <host_port> <user> <pw> <out_png> <out_log>
+  local hp="$1" u="$2" pw="$3" png="$4" lg="$5" frdp
+  frdp=$(command -v xfreerdp3 || command -v xfreerdp || command -v sdl-freerdp || true)
+  if [ -z "$frdp" ] || ! command -v Xvfb >/dev/null || ! command -v import >/dev/null; then echo SKIP; return; fi
+  Xvfb :98 -screen 0 1280x720x24 >/dev/null 2>&1 & local xpid=$!
+  sleep 1
+  DISPLAY=:98 "$frdp" /v:127.0.0.1:"$hp" /u:"$u" /p:"$pw" /cert:ignore /sec:nla /size:1280x720 ${GFX_TWEAK:-} > "$lg" 2>&1 & local rpid=$!
+  sleep 14
+  DISPLAY=:98 import -window root "$png" >/dev/null 2>&1 || true
+  kill "$rpid" "$xpid" >/dev/null 2>&1
+  local sd=0; [ -s "$png" ] && sd=$(convert "$png" -colorspace Gray -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
+  echo "$sd"
+}
+
+# ---- MULTI-USER test (variant 1): N concurrent users, per-user ports, per-user SSO ----
+# Proves the open multi-user risk: does GDM create CONCURRENT CreateUserDisplay autologin
+# sessions for DISTINCT users, each served by its own gnome-remote-desktop-headless on its
+# own loopback port, each single-credential SSO to its OWN painted desktop?
+multiuser() {
+  local n="$NUSERS" ct="grd-spike-mu" od="$OUTDIR/mu"; mkdir -p "$od"; CT="$ct"
+  podman rm -f "$ct" >/dev/null 2>&1
+  local pubs=() i; for i in $(seq 0 $((n-1))); do pubs+=( -p "127.0.0.1:$((HOSTPORT+i)):$((3389+i))" ); done
+  log "[mu] starting '$ct' for $n users — container :3389..:$((3388+n)) -> host :$HOSTPORT..:$((HOSTPORT+n-1))…"
+  podman run -d --name "$ct" --hostname "$ct" \
+      --systemd=always --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+      --shm-size=1g --security-opt label=disable --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+      --device /dev/fuse "${pubs[@]}" "$IMG" >/dev/null \
+      || { err "[mu] container failed to start (old grd-spike-* still holding a port? remove them)"; return 1; }
+  local up=0; for i in $(seq 1 30); do case "$(xc "$ct" systemctl is-system-running 2>/dev/null)" in running|degraded) up=1; break;; esac; sleep 1; done
+  [ "$up" = 1 ] || { err "[mu] systemd never came up"; return 1; }
+  xc "$ct" systemctl enable --now gdm.service >/dev/null 2>&1 || warn "[mu] gdm.service failed to start"
+  local users=(); for i in $(seq 0 $((n-1))); do [ "$i" = 0 ] && users+=(core) || users+=("u$i"); done
+  # provision each user + spawn its headless autologin session (GNOME-50 turnkey)
+  for i in $(seq 0 $((n-1))); do
+    local u="${users[$i]}" uid="$((1000+i))"
+    [ "$u" = core ] || xc "$ct" useradd -u "$uid" -m "$u" >/dev/null 2>&1
+    xc "$ct" loginctl enable-linger "$u" >/dev/null 2>&1 || true
+    xc "$ct" bash -lc "install -d -o $u -g $u /home/$u/.grd-cert && openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=grd-$u -keyout /home/$u/.grd-cert/key.pem -out /home/$u/.grd-cert/cert.pem 2>/dev/null && chown -R $u:$u /home/$u/.grd-cert && chmod 600 /home/$u/.grd-cert/key.pem"
+    xc "$ct" systemctl enable --now "gnome-headless-session@$u.service" >/dev/null 2>&1 || warn "[mu] gnome-headless-session@$u failed"
+  done
+  log "[mu] waiting ${SESSION_WAIT}s for $n concurrent sessions…"; sleep "$SESSION_WAIT"
+  # per-user: configure GRD on a DISTINCT port (negotiation OFF) + start the headless daemon
+  for i in $(seq 0 $((n-1))); do
+    local u="${users[$i]}" uid="$((1000+i))" port="$((3389+i))" pw="spikepw-${users[$i]}"
+    local ux=(podman exec --user "$u" -e XDG_RUNTIME_DIR=/run/user/"$uid" -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus "$ct")
+    "${ux[@]}" grdctl --headless rdp set-tls-cert "/home/$u/.grd-cert/cert.pem" >/dev/null 2>&1
+    "${ux[@]}" grdctl --headless rdp set-tls-key  "/home/$u/.grd-cert/key.pem"  >/dev/null 2>&1
+    "${ux[@]}" grdctl --headless rdp set-credentials "$u" "$pw" >/dev/null 2>&1
+    "${ux[@]}" grdctl --headless rdp set-port "$port" >/dev/null 2>&1 \
+      || "${ux[@]}" gsettings set org.gnome.desktop.remote-desktop.rdp port "$port" >/dev/null 2>&1 || true
+    "${ux[@]}" grdctl --headless rdp disable-port-negotiation >/dev/null 2>&1 \
+      || "${ux[@]}" gsettings set org.gnome.desktop.remote-desktop.rdp negotiate-port false >/dev/null 2>&1 || true
+    "${ux[@]}" grdctl --headless rdp enable >/dev/null 2>&1
+    "${ux[@]}" systemctl --user restart gnome-remote-desktop-headless.service >/dev/null 2>&1 \
+      || "${ux[@]}" systemctl --user start gnome-remote-desktop-headless.service >/dev/null 2>&1
+  done
+  sleep 5
+  xc "$ct" loginctl list-sessions > "$od/loginctl.txt" 2>&1 || true
+  xc "$ct" ss -ltnp > "$od/ss.txt" 2>&1 || true
+  # per-user paint test from the host (each user's OWN port + OWN credential)
+  for i in $(seq 0 $((n-1))); do
+    local u="${users[$i]}" hp="$((HOSTPORT+i))" pw="spikepw-${users[$i]}" sd
+    sd=$(capture_frame "$hp" "$u" "$pw" "$od/frame-$u.png" "$od/freerdp-$u.log")
+    if [ "$sd" = SKIP ]; then MU_RES[$u]=SKIP; warn "[mu] '$u': paint SKIPPED (need freerdp/Xvfb/IM)"
+    elif awk "BEGIN{exit !($sd > 0.02)}"; then MU_RES[$u]=PASS; log "[mu] '$u' via host :$hp -> PAINTS (stddev=$sd)"
+    else MU_RES[$u]=FAIL; warn "[mu] '$u' via host :$hp -> black/no-frame (stddev=$sd); see $od/freerdp-$u.log"; fi
+  done
+  # ---- multi-user summary ----
+  echo "======================================================================"
+  echo "[mu] MULTI-USER ($n users — variant 1 / GNOME-50 turnkey, per-user ports):"
+  local rc=0
+  for i in $(seq 0 $((n-1))); do
+    local u="${users[$i]}"
+    printf '       %-6s  container:%s  host:%s  paint=%s\n' "$u" "$((3389+i))" "$((HOSTPORT+i))" "${MU_RES[$u]:--}"
+    [ "${MU_RES[$u]:-}" = PASS ] || rc=1
+  done
+  echo "       --- logind sessions (want one class=user per user) ---"; cat "$od/loginctl.txt"
+  echo "       --- listening RDP ports (want one per user) ---"; grep -aE ':33[89][0-9]' "$od/ss.txt" || echo "(none)"
+  echo "======================================================================"
+  if [ "$rc" = 0 ]; then
+    log "[mu] MULTI-USER WORKS: $n concurrent per-user GNOME sessions, each on its own loopback port,"
+    log "     each single-credential SSO to its OWN painted desktop. Per-user-ports multi-user host-validated."
+  else
+    err "[mu] NOT fully green — inspect $od/. If user1+ is black while core paints, suspect GDM concurrency"
+    err "     (CreateUserDisplay for a 2nd distinct user) or a port collision; check $od/loginctl.txt + ss.txt + journal-*.txt."
+    xc "$ct" journalctl --no-pager _UID=1001 > "$od/journal-u1.txt" 2>&1 || true
+  fi
+  return "$rc"
+}
+
 # ---- main -------------------------------------------------------------------
 require_podman
 mkdir -p "$OUTDIR"
+if [ "$NUSERS" -ge 2 ]; then
+  log "spike start | MULTI-USER NUSERS=$NUSERS FED=$FED HOSTPORT=$HOSTPORT OUT=$OUTDIR"
+  build_image || { err "ABORT: base image did not build."; exit 3; }
+  multiuser; mu_rc=$?
+  cleanup; CT=""
+  exit "$mu_rc"
+fi
 log "spike start | FED=$FED VARIANTS='$VARIANTS' HOSTPORT=$HOSTPORT OUT=$OUTDIR"
 build_image || { err "ABORT: base image did not build — the paint primitive was NOT tested."; exit 3; }
 for v in $VARIANTS; do
