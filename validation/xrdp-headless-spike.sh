@@ -32,7 +32,7 @@ NUSERS="${NUSERS:-2}"                               # users to stand up: core + 
 HOSTPORT="${HOSTPORT:-13389}"                       # host loopback -> container :3389
 IMG="${IMG:-localhost/xrdp-spike:f${FED}}"
 OUTDIR="${OUTDIR:-$PWD/xrdp-spike-out}"
-SESSION_WAIT="${SESSION_WAIT:-12}"                  # secs for a session to spawn after connect
+SESSION_WAIT="${SESSION_WAIT:-20}"                  # secs for a session to spawn after connect (cold XFCE on llvmpipe)
 KEEP="${KEEP:-0}"
 RDP_SEC="${RDP_SEC:-rdp}"                            # xrdp security: rdp|tls|nla (tunable)
 CT=""; declare -A R
@@ -59,11 +59,15 @@ RUN dnf -y --setopt=install_weak_deps=False install \
     && dnf clean all
 # launch XFCE for every xrdp session
 RUN printf '#!/bin/bash\nexport XDG_SESSION_TYPE=x11\nexec startxfce4\n' > /etc/xrdp/startwm.sh && chmod +x /etc/xrdp/startwm.sh
-# xrdp RSA keys + a self-signed TLS cert (xrdp.ini default paths)
-RUN xrdp-keygen xrdp auto >/dev/null 2>&1 || true; \
+# xrdp RSA keys + a self-signed TLS cert (xrdp.ini default paths). xrdp DROPS PRIVS to
+# the 'xrdp' user before reading these, so cert/key/rsakeys MUST be owned by it — else
+# TLS is refused ('Cannot read private key file ... Permission denied') AND the classic-RDP
+# fallback can't read rsakeys.ini, killing BOTH security paths (xrdp_sec_incoming failed).
+RUN xrdp-keygen xrdp auto && \
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=xrdp-spike \
-      -keyout /etc/xrdp/key.pem -out /etc/xrdp/cert.pem >/dev/null 2>&1; \
-    chmod 600 /etc/xrdp/key.pem
+      -keyout /etc/xrdp/key.pem -out /etc/xrdp/cert.pem >/dev/null 2>&1 && \
+    chown xrdp:xrdp /etc/xrdp/key.pem /etc/xrdp/cert.pem /etc/xrdp/rsakeys.ini && \
+    chmod 640 /etc/xrdp/key.pem /etc/xrdp/cert.pem /etc/xrdp/rsakeys.ini
 RUN printf 'LIBGL_ALWAYS_SOFTWARE=1\nGALLIUM_DRIVER=llvmpipe\n' >> /etc/environment
 # supervised-bash PID 1: system dbus + xrdp-sesman + xrdp, then wait (the lineage's model)
 RUN printf '#!/bin/bash\nmkdir -p /run/dbus /var/run/xrdp\ndbus-daemon --system --fork 2>/dev/null||true\n/usr/sbin/xrdp-sesman\nsleep 1\n/usr/sbin/xrdp\nexec sleep infinity\n' > /usr/local/bin/spike-init && chmod +x /usr/local/bin/spike-init
