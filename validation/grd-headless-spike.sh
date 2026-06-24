@@ -249,18 +249,28 @@ probe_paint() {
   log "[$v] Gate D: connecting a real RDP client into Xvfb and capturing a frame…"
   Xvfb :99 -screen 0 1280x720x24 >/dev/null 2>&1 & local xpid=$!
   sleep 1
+  # Minimal, FreeRDP2/3-portable args. NO '+auth-only' (default is a full session — what
+  # we want to capture); '+auth-only:off' was invalid syntax that made the client reject
+  # its own command line and never connect.
   DISPLAY=:99 "$frdp" /v:127.0.0.1:"$HOSTPORT" /u:core /p:"$TESTPW" /cert:ignore /sec:nla \
-      /size:1280x720 +auth-only:off >/"$od"/freerdp.log 2>&1 & local rpid=$!
-  sleep 10
+      /size:1280x720 +clipboard > "$od/freerdp.log" 2>&1 & local rpid=$!
+  sleep 14
   DISPLAY=:99 import -window root "$od/frame.png" >/dev/null 2>&1 || true
   kill "$rpid" "$xpid" >/dev/null 2>&1
-  if [ ! -s "$od/frame.png" ]; then RESULT["$v:D"]=FAIL; warn "[$v] Gate D: no frame captured (handshake failed? see $od/freerdp.log)"; return; fi
-  local sd; sd=$(convert "$od/frame.png" -colorspace Gray -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
+  local sd=0; [ -s "$od/frame.png" ] && sd=$(convert "$od/frame.png" -colorspace Gray -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
   echo "$sd" > "$od/frame-stddev.txt"
   if awk "BEGIN{exit !($sd > 0.02)}"; then
     RESULT["$v:D"]=PASS; log "[$v] Gate D: NON-BLACK desktop frame rendered (stddev=$sd) — IT PAINTS + SSO works"
+  elif grep -qiE 'invalid sigil|^usage:|failed at index|/usr/bin/.*free.*rdp - ' "$od/freerdp.log"; then
+    RESULT["$v:D"]=SKIP
+    warn "[$v] Gate D INCONCLUSIVE: the freerdp client rejected its own arguments (version quirk) and never connected — NOT a desktop result. See $od/freerdp.log; try the manual connect below."
+    printf '        DISPLAY=:99 %s /v:127.0.0.1:%s /u:core /p:%s /cert:ignore /size:1280x720\n' "$frdp" "$HOSTPORT" "$TESTPW"
+  elif grep -qiE 'connected to|negotiat|channel|licens|server redirect|surface|gfx' "$od/freerdp.log"; then
+    RESULT["$v:D"]=FAIL
+    warn "[$v] Gate D: client CONNECTED but captured frame is black (stddev=$sd) — session may be empty / no virtual monitor, OR the WM-less Xvfb capture missed the window. Eyeball $od/frame.png; see $od/freerdp.log."
   else
-    RESULT["$v:D"]=FAIL; warn "[$v] Gate D: frame is black/uniform (stddev=$sd) — connected but no painted desktop"
+    RESULT["$v:D"]=FAIL
+    warn "[$v] Gate D: client did not connect (stddev=$sd) — see $od/freerdp.log (auth/security/port)."
   fi
 }
 
