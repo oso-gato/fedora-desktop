@@ -30,11 +30,12 @@ set -uo pipefail
 FED="${FED:-44}"
 NUSERS="${NUSERS:-2}"                               # users to stand up: core + u1..u(N-1)
 HOSTPORT="${HOSTPORT:-13389}"                       # host loopback -> container :3389
-IMG="${IMG:-localhost/xrdp-spike:f${FED}}"
+RDP_BACKEND="${RDP_BACKEND:-xorg}"                  # xorg (production: xorgxrdp/libxup) | xvnc (Fedora stock default)
+IMG="${IMG:-localhost/xrdp-spike:f${FED}-${RDP_BACKEND}}"
 OUTDIR="${OUTDIR:-$PWD/xrdp-spike-out}"
 SESSION_WAIT="${SESSION_WAIT:-20}"                  # secs for a session to spawn after connect (cold XFCE on llvmpipe)
 KEEP="${KEEP:-0}"
-RDP_SEC="${RDP_SEC:-rdp}"                            # xrdp security: rdp|tls|nla (tunable)
+RDP_SEC="${RDP_SEC:-tls}"                            # xrdp security: rdp|tls|nla. tls: FreeRDP3 + Fedora xrdp negotiate-default
 CT=""; declare -A R
 log(){ printf '\033[1;36m[xrdp-spike]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;33m[xrdp-spike] WARN:\033[0m %s\n' "$*" >&2; }
@@ -48,8 +49,18 @@ mkdir -p "$OUTDIR"
 build_image(){
   podman image exists "$IMG" && { log "image $IMG exists"; return 0; }
   log "building $IMG (minimal xrdp + xorgxrdp + XFCE; a few min)…"
-  local cf pol rc; cf="$(mktemp)"; pol="$(mktemp)"
+  local cf pol rc backend_cfg; cf="$(mktemp)"; pol="$(mktemp)"
   printf '%s' '{"default":[{"type":"insecureAcceptAnything"}]}' > "$pol"
+  # Session backend. PRODUCTION's intent is Xorg/xorgxrdp, but Fedora ships xrdp.ini with
+  # [Xorg] COMMENTED + [Xvnc] active, so a stock install serves Xvnc (libvnc). Option A
+  # commits to Xorg: uncomment the [Xorg] stanza (incl. code=20) + autorun=Xorg so incoming
+  # RDP connections attach to the xorgxrdp (libxup) backend. Mirrors the install.sh fix.
+  # RDP_BACKEND=xvnc keeps the Fedora stock default (for A/B comparison).
+  if [ "$RDP_BACKEND" = xorg ]; then
+    backend_cfg='RUN sed -i "/^#\[Xorg\]/,/^#code=/{s/^#//}" /etc/xrdp/xrdp.ini && sed -i "s/^autorun=.*/autorun=Xorg/" /etc/xrdp/xrdp.ini'
+  else
+    backend_cfg='# RDP_BACKEND=xvnc: Fedora stock ([Xvnc] active, [Xorg] commented) — no change'
+  fi
   cat > "$cf" <<EOF
 FROM registry.fedoraproject.org/fedora:${FED}
 RUN dnf -y --setopt=install_weak_deps=False install \
@@ -57,6 +68,8 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal xfce4-settings \
         dbus-x11 xorg-x11-xauth mesa-dri-drivers procps-ng iproute util-linux passwd openssl \
     && dnf clean all
+# --- session backend selection (Xorg/xorgxrdp vs Fedora-stock Xvnc; see build_image) ---
+${backend_cfg}
 # launch XFCE for every xrdp session. Fedora's sesman runs /usr/libexec/xrdp/startwm-bash.sh
 # -> the standard Xsession -> ~/.Xclients (NOT /etc/xrdp/startwm.sh — writing that is a no-op
 # here). Bake an executable ~/.Xclients=startxfce4 into /etc/skel so every `useradd -m` user
@@ -141,22 +154,36 @@ for i in "${!users[@]}"; do
   elif awk "BEGIN{exit !($sd>0.02)}"; then R[$u]=PASS; log "$u via :$HOSTPORT -> PAINTS own session (stddev=$sd)"
   else R[$u]=FAIL; allpaint=0; warn "$u via :$HOSTPORT -> black/no-frame (stddev=$sd); see $OUTDIR/freerdp-$u.log"; fi
 done
-# Gate B evidence: distinct per-user Xorg :1x sessions
-podman exec "$CT" bash -lc 'ls -1 /tmp/.X11-unix 2>/dev/null; pgrep -a Xorg 2>/dev/null' > "$OUTDIR/sessions.txt" 2>&1 || true
+# Gate B evidence: distinct per-user :1x sessions + WHICH backend actually answered
+podman exec "$CT" bash -lc 'ls -1 /tmp/.X11-unix 2>/dev/null; echo "--- X servers ---"; pgrep -af "Xorg|Xvnc" 2>/dev/null | grep -vi grep' > "$OUTDIR/sessions.txt" 2>&1 || true
+# Backend faithfulness: the connections MUST land on the backend we configured. A silent
+# Xvnc fallback on an RDP_BACKEND=xorg run is a FAIL — it means the [Xorg] uncomment didn't
+# take and we are NOT exercising the production path (Xorg=/usr/libexec/Xorg via xorgxrdp/
+# libxup; Xvnc=Xvnc via libvnc).
+got_xorg=$(podman exec "$CT" bash -c 'pgrep -cx Xorg' 2>/dev/null | tr -dc 0-9); got_xorg=${got_xorg:-0}
+got_xvnc=$(podman exec "$CT" bash -c 'pgrep -cx Xvnc' 2>/dev/null | tr -dc 0-9); got_xvnc=${got_xvnc:-0}
+case "$RDP_BACKEND" in
+  xorg) { [ "${got_xorg:-0}" -gt 0 ] && [ "${got_xvnc:-0}" = 0 ]; } && R[backend]=PASS || R[backend]=FAIL ;;
+  xvnc) { [ "${got_xvnc:-0}" -gt 0 ] && [ "${got_xorg:-0}" = 0 ]; } && R[backend]=PASS || R[backend]=FAIL ;;
+  *)    R[backend]=PASS ;;
+esac
 
 # ---- summary ----------------------------------------------------------------
 echo "======================================================================"
-echo "[xrdp-spike] xrdp lineage — $NUSERS users, ONE shared :3389 (sesman <User,bpp> routing):"
-printf '   %-8s %-6s\n' "A/C:3389" "${R[sys]:--}"
-for i in "${!users[@]}"; do printf '   %-8s paint=%s\n' "${users[$i]}" "${R[${users[$i]}]:--}"; done
+echo "[xrdp-spike] xrdp lineage — $NUSERS users, ONE shared :3389, backend=${RDP_BACKEND} (sesman <User,bpp> routing):"
+printf '   %-10s %-6s\n' "A/C:3389" "${R[sys]:--}"
+printf '   %-10s %-6s (Xorg procs=%s, Xvnc procs=%s)\n' "backend" "${R[backend]:--}" "${got_xorg:-0}" "${got_xvnc:-0}"
+for i in "${!users[@]}"; do printf '   %-10s paint=%s\n' "${users[$i]}" "${R[${users[$i]}]:--}"; done
 echo "   --- per-user X sessions (want one :1x per connected user) ---"; cat "$OUTDIR/sessions.txt" 2>/dev/null
 echo "======================================================================"
-if [ "${R[sys]:-}" = PASS ] && [ "$allpaint" = 1 ]; then
-  log "VERDICT: xrdp PAINTS headless + MULTI-USER works — $NUSERS distinct usernames each got"
-  log "         their own painted XFCE :1x session over the shared :3389. (Resume + the public"
-  log "         Guacamole door / TOTP / fleet-over-Tailscale are real-deploy-only — see the runbook.)"
+if [ "${R[sys]:-}" = PASS ] && [ "$allpaint" = 1 ] && [ "${R[backend]:-}" = PASS ]; then
+  log "VERDICT: xrdp PAINTS headless + MULTI-USER works on the ${RDP_BACKEND} backend — $NUSERS"
+  log "         distinct usernames each got their own painted XFCE :1x session over the shared"
+  log "         :3389. (Resume + the public Guacamole door / TOTP / fleet-over-Tailscale are"
+  log "         real-deploy-only — see the runbook.)"
   exit 0
 else
+  [ "${R[backend]:-}" = FAIL ] && err "VERDICT: BACKEND MISMATCH — wanted ${RDP_BACKEND} but saw Xorg=$got_xorg/Xvnc=$got_xvnc."
   err "VERDICT: not fully green. If core paints but u1 is black, that's the XFCE second-session"
   err "         black-screen (the key multi-user risk) — inspect $OUTDIR/freerdp-*.log + sessions.txt +"
   err "         container.log. If :3389 is down, xrdp/sesman didn't start (container.log)."
