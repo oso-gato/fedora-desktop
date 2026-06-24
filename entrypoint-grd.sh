@@ -52,6 +52,25 @@ runuser -u core -- bash -c '
         mv "$t" ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
     else rm -f "$t"; fi'
 
+# ---- tailnet join: Tailscale SSH + the fleet-tile uplink ---------------------
+# tailscaled runs as tailscaled.service (install-grd). Bring the node UP so (a) ssh/RDP
+# are reachable over the tailnet and (b) guacd can reach the FLEET_SSH bastion tiles on the
+# dev box + host over THIS node's tailnet. Unattended via TS_AUTHKEY (synchronous, bounded —
+# never loop forever on a bad key); without a key, kick off the interactive login in the
+# BACKGROUND so this oneshot (and Tomcat, which Requires= it) does not block on a browser.
+for _i in $(seq 1 30); do
+    tailscale status >/dev/null 2>&1 && break
+    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    sleep 1
+done
+if [ -n "${TS_AUTHKEY:-}" ]; then
+    tailscale up --ssh --auth-key="${TS_AUTHKEY}" --hostname=fedora-desktop-grd \
+        || echo "[tailscale] up failed (bad/expired TS_AUTHKEY?) — fleet tiles + tailnet RDP stay unreachable until 'tailscale up' succeeds" >&2
+else
+    ( tailscale up --ssh --hostname=fedora-desktop-grd 2>&1 | sed 's/^/[tailscale] /' ) &
+    echo "[tailscale] no TS_AUTHKEY — open the login.tailscale.com URL in the journal to join (one-time per state volume)" >&2
+fi
+
 # ---- tailnet-only by CONSTRUCTION (defense-in-depth; parity with the xrdp lineage) --
 # The web gateway (:8443) is the ONLY public door. ssh (:22), mosh, and EVERY GRD RDP
 # port (:3389-:3394, one per user) are TAILNET-ONLY: run.sh.grd publishes only the web
