@@ -488,6 +488,19 @@ sed -i 's/^#\?KillDisconnected=.*/KillDisconnected=false/' /etc/xrdp/sesman.ini
 # session and breaks the cross-device / multi-user RESUME guarantee. The Guacamole
 # path already pins color-depth=24; this fences the native-RDP path to match.
 sed -i 's/^#\?max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini
+# Activate the Xorg/xorgxrdp backend. Fedora ships /etc/xrdp/xrdp.ini with the [Xorg]
+# connection section COMMENTED OUT and only [Xvnc] active, so a stock install silently
+# serves the Xvnc (libvnc) backend — NOT the xorgxrdp Xorg :10 session this lineage is built
+# for, and NOT what the gfx.toml H.264 tuning, openh264, or the `xrdp-sesrun -t Xorg` pre-warm
+# assume. (xrdp-sesrun reads sesman.ini, where [Xorg] IS enabled, so the pre-warm DOES create
+# an Xorg session — but with [Xorg] commented here, incoming Guacamole/RDP connections take the
+# only-active [Xvnc] section and fork a SEPARATE Xvnc session, orphaning the pre-warm and giving
+# users Xvnc.) Uncomment the [Xorg] stanza (through code=20) and pin autorun=Xorg so EVERY
+# incoming connection attaches to the xorgxrdp backend. HOST-VALIDATED: core+u1 each paint
+# their own /usr/libexec/Xorg :1x session (validation/xrdp-headless-spike.sh RDP_BACKEND=xorg;
+# Xorg procs=2 / Xvnc procs=0).
+sed -i '/^#\[Xorg\]/,/^#code=/{s/^#//}' /etc/xrdp/xrdp.ini
+sed -i 's/^autorun=.*/autorun=Xorg/' /etc/xrdp/xrdp.ini
 if [ -f /etc/xrdp/gfx.toml ]; then
     sed -i 's/^order *=.*/order = [ "H.264", "RFX" ]/' /etc/xrdp/gfx.toml
     sed -i 's/^h264_encoder *=.*/h264_encoder = "OpenH264"/' /etc/xrdp/gfx.toml || true
