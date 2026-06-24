@@ -10,38 +10,66 @@
 #   web  https://<ip>:${WEB_PORT}/guacamole/  PUBLIC — Guacamole on GRD's RDP. The ONLY
 #        -p publish; WEB_PORT is changeable at spin-up (default 8443) so this lineage can
 #        COEXIST with the xrdp lineage on ONE host — give each a DISTINCT WEB_PORT.
-#   RDP  <tailnet-ip>:3389   TAILNET-ONLY — GRD native (TLS)
-#   VNC  <tailnet-ip>:5900   TAILNET-ONLY — GRD native (RFB_PW)
+#   RDP  <tailnet-ip>:3389   TAILNET-ONLY — GRD native, NLA (core; each additional user's
+#        desktop is a loopback :3389+n that Guacamole fronts)
+#   VNC  — not on grd v1 (RFB_PW is accepted but IGNORED; native VNC is a follow-up)
 #   ssh  Tailscale SSH (keyless) / ssh-key over the tailnet; mosh over the tailnet ssh.
 #        ssh/mosh are TAILNET-ONLY (never -p), matching the xrdp lineage + the nft guard.
 #
 # The web gateway is Apache Guacamole (the only one). Required: RDP_PW + GUAC_PW
-# (the public web login — use a STRONG password; brute-force lockout is enforced by
-# the baked guacamole-auth-ban extension). RFB_PW is OPTIONAL: it arms the
-# tailnet-only GRD VNC :5900 mirror for native VNC viewers.
+# (the public web login — use a STRONG password; brute-force lockout via guacamole-auth-ban).
 #   RDP_PW='…'   (required) core's system + GRD RDP password
 #   GUAC_PW='…'  (required) the PUBLIC Guacamole web-login password (user core)
 #   WEB_PORT     (optional) host port for the public web door. DEFAULT 8443. Set a
 #                DISTINCT value per lineage to run the xrdp + grd lineages on ONE host.
-#   RFB_PW='…'   (optional) the GRD VNC password (tailnet :5900 mirror); else RDP_PW
-#   TS_AUTHKEY   (optional) unattended tailnet join
-#   IMAGE        (optional) defaults to the local build
+#   FLEET_SSH    (optional) clientless browser-SSH bastion tiles to other fleet hosts on the
+#                SAME public web door — ';'-list "label host [port] [user]", e.g.
+#                FLEET_SSH='dev fedora-dev 22 core;vps erebus 22 core' (host = the TAILNET
+#                node name / 100.x IP; reached over the desktop's server-side tailnet).
+#   FLEET_SSH_KEY=/path/to/key (optional) private key for the fleet tiles (bind-mounted RO,
+#                never baked); else keyless Tailscale-SSH.
+#   USER{1..5}_NAME / _PW / _ACCESS (optional) up to 5 additional desktop users beyond core;
+#                each gets its OWN web login + headless GNOME session (own loopback port) +
+#                own /home volume. _ACCESS: none | dev | host | both (which fleet tiles show).
+#   RFB_PW       (accepted but IGNORED on grd v1 — RDP-only; native VNC is a follow-up)
+#   TS_AUTHKEY   (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
-#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8444] [RFB_PW='…'] [TS_AUTHKEY=tskey-…] ./run.sh.grd
+#   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8444] [FLEET_SSH='…'] [FLEET_SSH_KEY=/path/key] \
+#     [USER1_NAME=… USER1_PW=… USER1_ACCESS=…] [… up to USER5 …] [TS_AUTHKEY=tskey-…] ./run.sh.grd
 set -eu
 : "${RDP_PW:?set RDP_PW (core system + GRD RDP password)}"
 : "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
 HEALTH_PATH="/guacamole/"
 IMAGE="${IMAGE:-localhost/fedora-desktop-grd:latest}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; WEB_PORT="${WEB_PORT:-8443}"
+FLEET_SSH="${FLEET_SSH:-}"
+# FLEET_SSH_KEY (optional) — private key for the browser-SSH fleet tiles (else keyless
+# Tailscale-SSH); bind-mounted READ-ONLY, never baked (Principle 5).
+FLEET_SSH_KEY="${FLEET_SSH_KEY:-}"; KEY_MOUNT=()
+[ -n "$FLEET_SSH_KEY" ] && KEY_MOUNT=(-v "$FLEET_SSH_KEY":/etc/fedora-desktop/fleet_ssh_key:ro)
+# Multi-user (optional): up to 5 additional desktop users; each gets its OWN persisted
+# /home volume (fedora-desktop-grd-userN) so its vault / app-state / GNOME session survive
+# recreation. Distinct volume names from the xrdp lineage so both can coexist on one host.
+USER_VOLS=()
+for _i in 1 2 3 4 5; do
+  eval "_un=\${USER${_i}_NAME:-}"
+  [ -n "$_un" ] && USER_VOLS+=(-v "fedora-desktop-grd-user${_i}:/home/${_un}")
+done
 
 # Secrets reach the first-boot oneshot via a bind-mounted EnvironmentFile (the
-# fedora-desktop-grd-firstboot.service reads /etc/fedora-desktop/secrets.env).
+# fedora-desktop-grd-firstboot.service reads /etc/fedora-desktop/secrets.env). entrypoint-grd.sh
+# provisions core + USER{1..5} and per-user GRD headless sessions; guac-db-provision emits the
+# per-user Guacamole tiles + the FLEET_SSH bastion tiles + the access-grant matrix.
 SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 { printf 'RDP_PW=%q\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
-  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%q\n' "$TS_AUTHKEY"; } > "$SECRETS"
+  [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%q\n' "$TS_AUTHKEY"
+  [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%q\n'  "$FLEET_SSH"
+  for _i in 1 2 3 4 5; do
+    eval "_un=\${USER${_i}_NAME:-}; _up=\${USER${_i}_PW:-}; _ua=\${USER${_i}_ACCESS:-none}"
+    [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%q\nUSER%s_PW=%q\nUSER%s_ACCESS=%q\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
+  done; } > "$SECRETS"
 
 podman run -d --name fedora-desktop-grd \
     --hostname fedora-desktop-grd \
@@ -54,6 +82,8 @@ podman run -d --name fedora-desktop-grd \
     --device /dev/net/tun --device /dev/fuse \
     --security-opt label=disable \
     -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
+    "${KEY_MOUNT[@]}" \
+    "${USER_VOLS[@]}" \
     -v fedora-desktop-grd-home:/home/core \
     -v fedora-desktop-grd-state:/var/lib/tailscale \
     -v fedora-desktop-grd-cert:/var/lib/guac-cert \
@@ -66,9 +96,13 @@ rm -f "$SECRETS"
 
 echo "Started fedora-desktop-grd (GNOME Wayland + GRD, systemd-PID-1, web=Apache Guacamole)."
 echo "  web   https://<public-or-tailnet-ip>:${WEB_PORT}${HEALTH_PATH}  (PUBLIC, the only public door; login core / GUAC_PW)"
+[ -n "$FLEET_SSH" ] && echo "       + clientless fleet SSH tiles on the SAME door: $(printf '%s' "$FLEET_SSH" | tr ';' ',')"
+for _i in 1 2 3 4 5; do
+  eval "_un=\${USER${_i}_NAME:-}; _ua=\${USER${_i}_ACCESS:-none}"
+  [ -n "$_un" ] && echo "       + user '$_un' — own web login + GNOME desktop; fleet access: $_ua"
+done
 echo "  RDP   <tailnet-ip>:3389   (TAILNET-ONLY — native RDP clients; login core / RDP_PW)"
-echo "  VNC   <tailnet-ip>:5900   (TAILNET-ONLY — native VNC viewers; password RFB_PW or RDP_PW)"
-echo "  ssh   ssh core@<tailnet-ip> (Tailscale SSH, keyless) — ssh/mosh are tailnet-only now"
+echo "  ssh   ssh core@<tailnet-ip> (Tailscale SSH, keyless) — ssh/mosh are tailnet-only"
 echo "  (coexist with the xrdp lineage on one host: give each a DISTINCT WEB_PORT.)"
 echo
 echo "REQUIRES a cgroup-v2-delegating host. If it never reaches (healthy), the most"
