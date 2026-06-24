@@ -57,8 +57,12 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal xfce4-settings \
         dbus-x11 xorg-x11-xauth mesa-dri-drivers procps-ng iproute util-linux passwd openssl \
     && dnf clean all
-# launch XFCE for every xrdp session
-RUN printf '#!/bin/bash\nexport XDG_SESSION_TYPE=x11\nexec startxfce4\n' > /etc/xrdp/startwm.sh && chmod +x /etc/xrdp/startwm.sh
+# launch XFCE for every xrdp session. Fedora's sesman runs /usr/libexec/xrdp/startwm-bash.sh
+# -> the standard Xsession -> ~/.Xclients (NOT /etc/xrdp/startwm.sh — writing that is a no-op
+# here). Bake an executable ~/.Xclients=startxfce4 into /etc/skel so every `useradd -m` user
+# (core, u1, ...) inherits it — mirrors production entrypoint.sh, which writes ~/.Xclients
+# from /etc/fedora-desktop/xsession. Without this the WM exits in 0s ("exited quickly").
+RUN printf 'startxfce4\n' > /etc/skel/.Xclients && chmod +x /etc/skel/.Xclients
 # xrdp RSA keys + a self-signed TLS cert (xrdp.ini default paths). xrdp DROPS PRIVS to
 # the 'xrdp' user before reading these, so cert/key/rsakeys MUST be owned by it — else
 # TLS is refused ('Cannot read private key file ... Permission denied') AND the classic-RDP
