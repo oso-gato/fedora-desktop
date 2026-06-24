@@ -36,6 +36,19 @@ desktop-critical, not just nested-podman plumbing — a future "SELinux hardenin
 xrdp key ownership, `~/.Xclients`, `dbus-uuidgen` machine-id — are things production already
 does; they were throwaway-image gaps, not product gaps.)
 
+**BACKEND finding + fix (2026-06-24).** The first green above used xrdp's *auto-selected* session,
+which on Fedora 44's stock `xrdp.ini` (`[Xorg]` commented, only `[Xvnc]` active) is **Xvnc** — so
+it validated the Xvnc backend, not the xorgxrdp/Xorg one the lineage is built for. Investigation
+(see PR #38 thread) found production was effectively serving **Xvnc** too: the `xrdp-sesrun -t Xorg`
+pre-warm *does* create an Xorg session (it reads `sesman.ini`, where `[Xorg]` is enabled), but
+every incoming connection took the only-active `[Xvnc]` section and forked a **separate Xvnc**
+session — orphaning the pre-warm. **Fix: PR #41** uncomments `[Xorg]` + sets `autorun=Xorg` in
+`install.sh`. **Re-VALIDATED GREEN on the Xorg backend** (`RDP_BACKEND=xorg`, NUSERS=2): core + u1
+each paint their own `/usr/libexec/Xorg` `:1x` (backend gate: Xorg procs=2, Xvnc procs=0). The
+spike now defaults to `RDP_BACKEND=xorg` and **fails** a run that silently falls back to Xvnc.
+Still real-deploy-only on Xorg: the pre-warm + cross-device resume (bpp=24), and audio/H.264 on
+the native-RDP-over-tailnet path.
+
 ---
 
 ## B — real-deploy validation (the go-live gate)

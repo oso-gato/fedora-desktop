@@ -11,6 +11,12 @@
 #   - N DISTINCT usernames -> ONE :3389 -> N distinct painted :1x sessions (multi-user),
 #   - reconnect at the SAME bpp resumes the SAME session (the bpp=24 invariant).
 #
+# BACKEND: Fedora 44 ships xrdp.ini with [Xorg] COMMENTED and only [Xvnc] active, so a stock
+# install serves Xvnc (libvnc) — NOT the xorgxrdp Xorg session the lineage is built for.
+# RDP_BACKEND (default xorg) bakes the install.sh fix into the image (uncomment [Xorg] +
+# autorun=Xorg) so the spike exercises the PRODUCTION xorgxrdp/libxup backend; a backend gate
+# FAILS the run if connections silently fell back to Xvnc. RDP_BACKEND=xvnc tests stock, for A/B.
+#
 # SIMPLER than grd: the xrdp lineage is supervised-bash (NOT systemd-PID-1), so it runs
 # in a PLAIN `podman run` — no --systemd=always / --cgroupns=host / cgroup delegation.
 #
