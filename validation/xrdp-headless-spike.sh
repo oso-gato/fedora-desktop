@@ -109,7 +109,14 @@ log "start | FED=$FED NUSERS=$NUSERS HOSTPORT=$HOSTPORT sec=$RDP_SEC OUT=$OUTDIR
 build_image || { err "ABORT: image did not build."; exit 3; }
 CT="xrdp-spike"; podman rm -f "$CT" >/dev/null 2>&1
 log "starting '$CT' (plain podman run — no systemd; one shared :3389)…"
+# Mirror the production run.sh security profile for the DESKTOP path (run.sh:108-113):
+# Fedora 44 loads SVG icons via glycin, which decodes inside a `bwrap` sandbox (nested
+# userns + mounts). On an SELinux-enforcing host the default container_t confinement
+# blocks that, so GTK can't load an icon, hits g_error(), and XFCE aborts (exit 134).
+# --security-opt label=disable + --cap-add SYS_ADMIN + --device /dev/fuse are exactly what
+# production passes so the desktop session works (NET_ADMIN/tun are tailscale-only, omitted).
 podman run -d --name "$CT" --hostname "$CT" --shm-size=1g \
+    --cap-add SYS_ADMIN --device /dev/fuse --security-opt label=disable \
     -p "127.0.0.1:${HOSTPORT}:3389" "$IMG" >/dev/null \
     || { err "container failed to start"; exit 1; }
 sleep 4
