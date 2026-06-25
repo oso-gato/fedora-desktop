@@ -87,6 +87,37 @@ systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.servic
 # spawned by gdm/gnome-headless-session@ — see below — not by this marker.)
 mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/core
 
+# ---- every interactive remote login lands in the persistent tmux workspace ----
+# Harness parity with the xrdp lineage (this drop-in was previously absent on grd,
+# so ssh/mosh logins got a plain shell with no tmux continuity). Each login gets
+# its OWN session inside the shared "main" group: the windows (the work) are
+# shared across every client, but each client's geometry and redraw state stay
+# INDEPENDENT — killing the multi-client geometry race where a newly-attaching
+# client of a different size forces the shared window to its geometry and paints
+# every other client onto a foreign grid (the garble on Prompt 3 / WebSSH). The
+# guards (interactive shell + SSH_TTY/tty) mean the GDM-spawned headless GNOME
+# session is untouched — only ssh/mosh logins (and in-desktop terminals) attach.
+# Per-connection "c<pid>" session self-destroys on disconnect; work persists in
+# the detached "main" base. Identical to fedora-dev / the xrdp install.sh.
+cat > /etc/profile.d/zz-tmux-attach.sh <<'EOF'
+# ssh + mosh logins each get their own session in the shared "main" group.
+case $- in *i*) ;; *) return ;; esac
+if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null && { [ -n "${SSH_TTY:-}" ] || [ -t 0 ]; }; then
+    tmux has-session -t main 2>/dev/null || tmux new-session -d -s main 2>/dev/null || true
+    exec tmux new-session -t main -s "c$$" \; set-option destroy-unattached on
+fi
+EOF
+
+# tmux server config: per-client geometry isolation + clean repaint (see the
+# xrdp install.sh for the rationale of each line).
+cat > /etc/tmux.conf <<'EOF'
+set -g default-terminal "tmux-256color"
+set -g window-size smallest
+setw -g aggressive-resize on
+set-hook -g client-attached 'refresh-client'
+set-hook -g client-resized  'refresh-client'
+EOF
+
 # ---- GRD variant-1 headless desktop: gdm as session FACTORY (HOST-VALIDATED) ----
 # Each desktop user gets a headless AUTOLOGIN session spawned on demand by gdm via
 # gnome-headless-session@<user> (GDM CreateUserDisplay → NO greeter → a real
