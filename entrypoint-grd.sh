@@ -146,12 +146,44 @@ RDP_PORT_PER_USER=1
 guac_db_provision
 unset GUAC_PW
 
-# ---- per-user GRD headless sessions (variant 1, exactly the spike-proven steps) --
-# For each user: GDM spawns the headless autologin session, GRD --headless serves it on
-# the user's OWN loopback port (negotiation OFF so the port is deterministic), and the
-# single RDP credential is that user's RDP_PW/USERn_PW. Per-command guards: one failing
-# step names itself and does NOT abort the oneshot (which would block Tomcat → :8443).
-setup_grd_user() {   # <user> <uid> <port> <rdp_pw>
+# ---- per-user GRD headless sessions (variant 1) — the SPIKE's TWO-PASS shape ------
+# THE LOAD-BEARING ORDERING (host-proven in validation/grd-headless-spike.sh, and the one
+# thing the earlier single-pass loop got wrong): `systemctl enable --now gnome-headless-
+# session@$u` returns as soon as the SYSTEM unit is active — but that unit only kicks gdm's
+# CreateUserDisplay, which then ASYNCHRONOUSLY brings up the user's `systemd --user` manager
+# and its session bus at /run/user/$uid/bus. grdctl --headless persists via GSettings/dconf,
+# which writes THROUGH that bus; run it before the bus exists and the write either fails or
+# lands in a throwaway dconf db the real session never reads → the daemon binds a wrong/
+# negotiated port → Guacamole dials a dead port → BLACK desktop, silently. The spike avoided
+# this by enabling ALL sessions, sleeping 25s ONCE, then configuring grdctl per user. We do
+# the same two passes but POLL each user bus (strictly better than a blind sleep).
+
+# Pass-1 helper: spawn one user's headless autologin session (gdm CreateUserDisplay, no greeter).
+start_grd_session() {   # <user>
+    local u="$1"
+    loginctl enable-linger "$u" >/dev/null 2>&1 || true
+    systemctl enable --now "gnome-headless-session@${u}.service" 2>/dev/null \
+        || echo "[grd] $u: gnome-headless-session@ failed to start (see journalctl)" >&2
+}
+# Settle helper: poll up to ~40s for the user's session bus to appear (replaces sleep 25).
+wait_user_bus() {   # <user> <uid> — poll until the session bus actually ANSWERS, not just exists
+    # The bus SOCKET can appear before the user's `systemd --user` dbus is answering, and grdctl
+    # writes config through dconf-over-that-bus — so probe a real round-trip (`busctl --user list`),
+    # not just the socket file, before returning ready. ~40s bounded; timeout is non-fatal.
+    local u="$1" uid="$2" _w
+    for _w in $(seq 1 40); do
+        if [ -S "/run/user/$uid/bus" ] && runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" busctl --user list >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+# Pass-2 helper: configure + start GRD inside the (now-up) user session bus. Returns the
+# rdp-enable status so the caller can fail CLOSED on core. Values pass via ENV into a
+# SINGLE-quoted body so passwords with shell metachars are safe.
+configure_grd_user() {   # <user> <uid> <port> <rdp_pw>  → exit 0 iff `rdp enable` + daemon start OK
     local u="$1" uid="$2" port="$3" pw="$4" cert="/home/$1/.grd-cert"
     install -d -m 0700 -o "$u" -g "$u" "$cert"
     if [ ! -f "$cert/cert.pem" ]; then
@@ -159,11 +191,6 @@ setup_grd_user() {   # <user> <uid> <port> <rdp_pw>
             -subj "/CN=fedora-desktop-grd-$u" -keyout "$cert/key.pem" -out "$cert/cert.pem" 2>/dev/null \
             && chmod 600 "$cert/key.pem" || echo "[grd] $u: TLS mint FAILED" >&2
     fi
-    systemctl enable --now "gnome-headless-session@${u}.service" 2>/dev/null \
-        || echo "[grd] $u: gnome-headless-session@ failed to start (see journalctl)" >&2
-    # configure + start GRD inside the user's own session bus. Values pass via ENV into a
-    # SINGLE-quoted body (no outer-shell interpolation) so passwords with shell metachars
-    # (quotes, $, spaces) are safe. Per-command guards keep one failure from aborting.
     runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
         GU="$u" GP="$pw" GPORT="$port" GCERT="$cert" bash -c '
@@ -174,16 +201,36 @@ setup_grd_user() {   # <user> <uid> <port> <rdp_pw>
             || gsettings set org.gnome.desktop.remote-desktop.rdp port "$GPORT" 2>/dev/null || true
         grdctl --headless rdp disable-port-negotiation 2>/dev/null \
             || gsettings set org.gnome.desktop.remote-desktop.rdp negotiate-port false 2>/dev/null || true
-        grdctl --headless rdp enable || echo "[grd] $GU rdp enable FAILED"
+        grdctl --headless rdp enable || { echo "[grd] $GU rdp enable FAILED"; exit 1; }
         systemctl --user restart gnome-remote-desktop-headless.service 2>/dev/null \
-            || systemctl --user start gnome-remote-desktop-headless.service || echo "[grd] $GU headless.service FAILED"
-        grdctl --headless status || true' \
-        || echo "[grd] $u: grdctl --headless setup reported a failure (see [grd] lines above)"
+            || systemctl --user start gnome-remote-desktop-headless.service \
+            || { echo "[grd] $GU headless.service FAILED"; exit 1; }
+        grdctl --headless status || true
+        exit 0'
 }
 
+# Pass 1: spawn EVERY user's headless session (lets gdm bring up concurrent CreateUserDisplay
+# sessions in parallel — the proven multi-user behavior — instead of serializing one at a time).
+for _i in "${!USERNAMES[@]}"; do start_grd_session "${USERNAMES[$_i]}"; done
+# Settle: wait for each user's session bus before any grdctl write.
 for _i in "${!USERNAMES[@]}"; do
-    setup_grd_user "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" "${USERPORTS[$_i]}" "${USERPWS[$_i]}"
+    wait_user_bus "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" \
+        || echo "[grd] ${USERNAMES[$_i]}: session bus /run/user/${USERUIDS[$_i]}/bus never appeared — grdctl config may not persist" >&2
 done
+# Pass 2: configure GRD per user. Track CORE (index 0) specifically.
+_core_grd_ok=0
+for _i in "${!USERNAMES[@]}"; do
+    if configure_grd_user "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" "${USERPORTS[$_i]}" "${USERPWS[$_i]}"; then
+        if [ "$_i" = 0 ]; then _core_grd_ok=1; fi   # explicit (set -e-safe + unambiguous)
+    else
+        echo "[grd] ${USERNAMES[$_i]}: GRD headless RDP did NOT enable (see [grd] lines above)" >&2
+    fi
+done
+# FAIL CLOSED on core: a dead core desktop must NOT be served behind a green box. tomcat.service
+# Requires= this oneshot, so exit 1 keeps :8443 down → the box never reports (healthy) → the host
+# rollback catches it — instead of the old fail-OPEN that exited 0 over a black desktop. Extra-user
+# failures are logged but non-fatal (core + the other users still serve).
+[ "$_core_grd_ok" = 1 ] || { echo "FATAL: core's GRD headless RDP failed to enable — refusing to serve a black desktop behind a healthy web door (likely the session/bus race; see journalctl -u 'gnome-headless-session@core' and the [grd] lines above)" >&2; exit 1; }
 
 echo "fedora-desktop-grd configured: GRD SYSTEM-FREE headless (variant 1) for users: ${USERNAMES[*]}"
 echo "Each user = a gdm-spawned headless autologin GNOME session served by"
