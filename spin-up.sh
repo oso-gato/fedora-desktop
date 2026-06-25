@@ -2,7 +2,7 @@
 # spin-up.sh — the interactive "spin-up container" wizard for fedora-desktop.
 # ============================================================================
 # Asks the operator the deploy-contract questions, then hands off to run.sh:
-#   1. core's secrets (RDP/system password + the public Guacamole web password)
+#   1. core's single password (system/RDP == Guacamole web — one credential, asked once)
 #   2. public web port + the optional Dev/VPS fleet SSH tiles + Tailscale auth key
 #   3. HOW MANY additional users beyond core (0-5)
 #   4. for EACH user: username, password, and fleet access (none|dev|host|both)
@@ -75,8 +75,11 @@ RUN_SCRIPT=./run.sh; [ "$LINEAGE" = grd ] && RUN_SCRIPT=./run.sh.grd
 [ "$LINEAGE" = grd ] && echo "spin-up: grd lineage — needs a cgroup-v2-delegating host; EXPERIMENTAL (xrdp is production). On one host, give grd a DISTINCT WEB_PORT from any xrdp box." >&2
 
 echo "=== fedora-desktop spin-up ===" >&2
-RDP_PW="$(choose_password "core's RDP/system password")"
-GUAC_PW="$(choose_password "core's Guacamole WEB password (the only public door)")"
+# ONE credential for core — matches how every extra user works (their single password is both
+# their OS/RDP login AND their Guacamole web login via SSO). Asked ONCE; set as both RDP_PW
+# (system/RDP) and GUAC_PW (public web door). A scripted run.sh can still set them DIFFERENTLY.
+CORE_PW="$(choose_password "core's password (system/RDP + Guacamole web — one credential)")"
+RDP_PW="$CORE_PW"; GUAC_PW="$CORE_PW"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
 # Host deploy pulls the GHCR-published image; run.sh's localhost/ default is for in-box
 # self-validation only (the host never builds locally — CI builds). Default to GHCR here.
