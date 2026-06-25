@@ -548,13 +548,19 @@ fi
 # without taking XFCE with it) is DEAD in this lineage: the no-systemd xrdp harness runs no polkitd
 # / system D-Bus, so it can only autostart, fail to register an authentication agent, and pop an
 # "XFCE PolicyKit Agent" error dialog at every login. polkit privilege-escalation is non-functional
-# BY DESIGN here (see the desktop note above). DELETE the autostart launcher outright — a file that
-# does not exist cannot be autostarted by any session. (We previously appended `Hidden=true` to it,
-# but that is the WRONG mechanism: per the XDG/XFCE autostart spec `Hidden=true` is honored for a
-# USER-level ~/.config/autostart override that SHADOWS the system file, NOT as an in-place edit of
-# the /etc/xdg/autostart file — host-verified ineffective: the agent still launched. rm is the
-# bulletproof, mechanism-independent disable, applied for ALL users incl. ones added later.)
-rm -f /etc/xdg/autostart/xfce-polkit.desktop
+# BY DESIGN here (see the desktop note above). Disable its autostart the SPEC-COMPLIANT, least-
+# invasive way: set Hidden=true in the entry (keeps the packaged file intact — no `rm` of an rpm-
+# owned file). SOURCE-VALIDATED against xfce4-session's autostart reader (xfsm_startup_autostart_xdg):
+#   skip = xfce_rc_read_bool_entry (rc, "Hidden", FALSE);  if (G_LIKELY (!skip)) { ...launch... }
+# so Hidden=true => skip => the agent is NEVER launched — and the reader applies this to EVERY
+# autostart .desktop, including a system /etc/xdg/autostart file (freedesktop Autostart spec: a
+# Hidden=true entry MUST be ignored, in any dir). NOTE: the dialog seen on earlier deploys was a
+# STALE IMAGE (this fix had never reached a deployed build), NOT a Hidden failure. The leading \n
+# guards against a file with no trailing newline; an extra blank line is harmless to .desktop parsing.
+if [ -f /etc/xdg/autostart/xfce-polkit.desktop ] \
+   && ! grep -qx 'Hidden=true' /etc/xdg/autostart/xfce-polkit.desktop; then
+  printf '\nHidden=true\n' >> /etc/xdg/autostart/xfce-polkit.desktop
+fi
 XFCONF=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
 install -d -m 0755 "$XFCONF"
 cat > "$XFCONF/xfwm4.xml" <<'XML'
