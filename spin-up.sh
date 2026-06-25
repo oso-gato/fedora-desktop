@@ -83,6 +83,14 @@ RDP_PW="$CORE_PW"; GUAC_PW="$CORE_PW"
 WEB_PORT="$(ask 'Public web-door port' 8443)"
 # Host deploy pulls the GHCR-published image; run.sh's localhost/ default is for in-box
 # self-validation only (the host never builds locally — CI builds). Default to GHCR here.
+# If IMAGE is ALREADY set in the environment we use it AND skip the prompt — so ANNOUNCE it loudly.
+# A silently pre-set IMAGE (e.g. an exported override pinning an old/other tag) is a real trap: every
+# `podman pull :latest` refreshes :latest while the deploy keeps launching the pinned tag, so the
+# container never updates and verified fixes never reach the box. Make it impossible to miss.
+if [ -n "${IMAGE:-}" ]; then
+  echo "  NOTE: using IMAGE from the environment -> $IMAGE" >&2
+  echo "        (image prompt skipped; run 'unset IMAGE' first to choose interactively / take the GHCR default)" >&2
+fi
 IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box self-validation only)' 'ghcr.io/oso-gato/fedora-desktop:latest')}"
 
 # Fleet SSH tiles: clientless browser-SSH tiles to OTHER tailnet hosts, on the SAME public web door
@@ -202,6 +210,7 @@ fi
 # --- summary + confirm ---
 {
   echo; echo "=== summary ==="
+  echo "  image     : ${IMAGE}"
   echo "  web door  : https://<host>:${WEB_PORT}/guacamole/   (login: core / <GUAC_PW>)"
   echo "  fleet tiles: ${FLEET_SSH:-(none)}"
   echo "  shared fldr: ${ENABLE_SHARED:+/home/shared — all desktop users, read+write (group deskshare)}${ENABLE_SHARED:-(none)}"
