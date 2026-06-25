@@ -26,7 +26,9 @@
 #                                grd => core-only, handled gracefully)
 #   FLEET_SSH          optional ';'-list "label host [port] [user]" (may be empty)
 #   RDP_DISABLE_AUDIO  1 = disable web-door audio (default), 0 = enable
-#   RDP_SECURITY       desktop RDP security mode: 'any' (xrdp) | 'tls' (grd)
+#   RDP_SECURITY       Guacamole RDP `security` for the desktop connection. Both lineages pass
+#                      'any' today (NLA): xrdp sets 'any', and GRD is NLA-ONLY so entrypoint-grd
+#                      ALSO sets 'any' ('tls' maps to NLA-disabled RDSTLS in Guac 1.6.0 → refused)
 #   RDP_PIN_BPP        1 = pin color-depth 24 (xrdp cross-device resume) | 0 = no
 # Schema is stashed at $GUAC_SCHEMA_001 by install*.sh.
 GUAC_SCHEMA_001="${GUAC_SCHEMA_001:-/usr/local/share/guacamole-schema/001-create-schema.sql}"
@@ -104,11 +106,17 @@ SQL
     if [ "$_acc" != none ] && [ -n "${FLEET_SSH:-}" ]; then
         printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
             [ -n "$f_label" ] && [ -n "$f_host" ] || continue
+            # EXACT-label match (anchored, NOT substring): a grant fires ONLY for the canonical
+            # fleet labels. Substring matching (*dev*) silently OVER-GRANTED — a 'dev' grant
+            # leaked any label containing 'dev' (devops/devbox), a 'host' grant leaked ghost/vpsny
+            # — each landing a core/admin shell on an UNINTENDED fleet host. The sanctioned
+            # spin-up.sh wizard only ever emits 'dev'/'vps', so exact matching is loss-less there
+            # and fails CLOSED (deny) for any non-canonical hand-rolled FLEET_SSH label.
             case "$_acc" in
-                all) : ;;
-                both) case "$f_label" in *dev*|*vps*|*host*) : ;; *) continue ;; esac ;;
-                dev)  case "$f_label" in *dev*) : ;; *) continue ;; esac ;;
-                host) case "$f_label" in *vps*|*host*) : ;; *) continue ;; esac ;;
+                all) : ;;                                              # core/admin: every tile
+                both) case "$f_label" in dev|vps|host) : ;; *) continue ;; esac ;;
+                dev)  case "$f_label" in dev)          : ;; *) continue ;; esac ;;
+                host) case "$f_label" in vps|host)     : ;; *) continue ;; esac ;;
                 *) continue ;;
             esac
             printf "INSERT IGNORE INTO guacamole_connection_permission (entity_id, connection_id, permission)\n  SELECT @eid, connection_id, 'READ' FROM guacamole_connection WHERE connection_name=%s AND parent_id=@grp;\n" "$(sqlstr "ssh-$f_label")"
