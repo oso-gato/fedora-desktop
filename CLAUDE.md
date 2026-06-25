@@ -150,7 +150,7 @@ fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is
 | nftables | Fedora current | a | firewall backend (tailscaled via Netlink API, netavark default on F41+, fail2ban `nftables[type=multiport]`). No iptables — verified unnecessary |
 | openssh-server | Fedora current | a | the login door (key-only; keys synced from `github.com/oso-gato.keys` each start). Public :4444→:22 + keyless Tailscale SSH; mosh bootstraps over either |
 | mosh | Fedora current | a | roaming-resilient remote shell. Public UDP 61001-62000 (non-default, avoids the bootstrap host's own mosh) |
-| tmux | Fedora current | a | session multiplexer; every interactive login auto-attaches `main` |
+| tmux | Fedora current | a | session multiplexer; every interactive login gets its OWN session in the shared `main` group (shared windows/work, independent per-client geometry — kills the multi-client resize-race garble), with a `/etc/tmux.conf` (default-terminal `tmux-256color`, `window-size smallest`, `aggressive-resize on`, `client-attached`/`-resized`→`refresh-client`). Identical to the fedora-dev harness fix |
 | distrobox | Fedora current | a | declaratively bootstraps the claudebox via `distrobox assemble create --file distrobox.ini` |
 | inotify-tools | Fedora current | a | `inotifywait` watches the in-box `rebuild.request` flag (no systemd `.path` units here) |
 | fail2ban-server | Fedora current | a | brute-force mitigation on public :4444; bans via `nftables`; tailnet CGNAT `ignoreip`'d. The **leaf** package, NOT the `fail2ban` metapackage (hard-pulls firewalld + esmtp — see Principle 3) |
