@@ -277,6 +277,54 @@ UNIT_EOF
 systemctl --global enable "${_svc}.service"
 done
 
+# 4) claudebox refresh machinery — the systemd equivalent of the xrdp entrypoint's daily
+#    tick (entrypoint.sh:539-553) + inotify rebuild-watcher (:523-533). Completes the box's
+#    self-update harness: the eager bootstrap (above) gives a working `claude`; these keep it
+#    current + honor the in-box `claudebox-rebuild` flag. All core `systemd --user`, ConditionUser.
+#  (a) rebuild-watcher: a .path unit on ~/.local/state/claudebox/rebuild.request → a oneshot that
+#      REMOVES the flag (so the .path re-arms, mirroring the inotify `create`+`rm`) then runs
+#      box-rebuild.sh. The in-box `claudebox-rebuild` wrapper writes that flag.
+cat > /etc/systemd/user/claudebox-rebuild-watch.path <<'UNIT_EOF'
+[Unit]
+Description=fedora-desktop-grd: watch for the in-box claudebox-rebuild flag (core)
+ConditionUser=core
+[Path]
+PathExists=%h/.local/state/claudebox/rebuild.request
+[Install]
+WantedBy=default.target
+UNIT_EOF
+cat > /etc/systemd/user/claudebox-rebuild-watch.service <<'UNIT_EOF'
+[Unit]
+Description=fedora-desktop-grd: run a claudebox rebuild on the flag (core)
+ConditionUser=core
+[Service]
+Type=oneshot
+# Remove the flag FIRST (so the .path re-arms), then rebuild from the LIVE clone (baked fallback).
+ExecStart=/bin/bash -c 'rm -f "$HOME/.local/state/claudebox/rebuild.request"; p=/home/core/.local/share/fedora-dev/box-rebuild.sh; [ -f "$p" ] || p=/usr/local/share/fedora-dev/box-rebuild.sh; exec bash "$p"'
+UNIT_EOF
+systemctl --global enable claudebox-rebuild-watch.path
+#  (b) daily refresh: a .timer at ~04:00 → claudebox-daily.sh (which probes the session lock and
+#      either rebuilds now or drops rebuild.pending for the `claude` wrapper to fire on exit).
+cat > /etc/systemd/user/claudebox-daily.service <<'UNIT_EOF'
+[Unit]
+Description=fedora-desktop-grd: daily claudebox refresh decision (core)
+ConditionUser=core
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'p=/home/core/.local/share/fedora-dev/claudebox-daily.sh; [ -f "$p" ] || p=/usr/local/share/fedora-dev/claudebox-daily.sh; exec bash "$p"'
+UNIT_EOF
+cat > /etc/systemd/user/claudebox-daily.timer <<'UNIT_EOF'
+[Unit]
+Description=fedora-desktop-grd: daily claudebox refresh ~04:00 (core)
+ConditionUser=core
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+systemctl --global enable claudebox-daily.timer
+
 # ---- GRD variant-1 headless desktop: gdm as session FACTORY (HOST-VALIDATED) ----
 # Each desktop user gets a headless AUTOLOGIN session spawned on demand by gdm via
 # gnome-headless-session@<user> (GDM CreateUserDisplay → NO greeter → a real
