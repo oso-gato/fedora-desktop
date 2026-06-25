@@ -136,19 +136,46 @@ podman run -d --name fedora-desktop \
     "$IMAGE"
 rm -f "$SECRETS"   # host copy gone; the bind-mount keeps it readable to PID 1 only (0700 dir)
 
+# ---- operator-facing access info (OUTPUT ONLY — no security flag / publish-set / device change) ----
+# Public IP for the web URL: prefer THIS host's own routable source IP; only ask the publisher's
+# echo service (api.ipify.org) when that source is private/NAT — so a public-IP host makes NO
+# external call. Tailnet IP (ssh/RDP/VNC doors) is read from the container once tailscaled is up.
+PUBIP="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' || true)"
+case "$PUBIP" in
+  ''|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|169.254.*|127.*)
+    _pub="$(curl -fsS --max-time 4 https://api.ipify.org 2>/dev/null || true)"; [ -n "$_pub" ] && PUBIP="$_pub" ;;
+esac
+[ -n "$PUBIP" ] || PUBIP='<public-ip>'
+TSIP='<tailnet-ip>'
+if [ -n "${TS_AUTHKEY:-}" ]; then          # key given -> node joins fast; read its tailnet IP
+  for _ in $(seq 1 12); do
+    _t="$(podman exec fedora-desktop tailscale ip -4 2>/dev/null | head -n1 || true)"
+    [ -n "$_t" ] && { TSIP="$_t"; break; }; sleep 1
+  done
+fi
+
 echo "Started fedora-desktop."
-echo "If no TS_AUTHKEY was given: podman logs -f fedora-desktop and open the"
-echo "ACTION REQUIRED login.tailscale.com link (one-time per state volume)."
+if [ -z "${TS_AUTHKEY:-}" ]; then          # token-less -> surface the one-time login URL from the log
+  echo "No TS_AUTHKEY given — fetching the one-time Tailscale login URL (this node must join before any SSH fleet tile works)…"
+  TSURL=""
+  for _ in $(seq 1 30); do
+    TSURL="$(podman logs fedora-desktop 2>&1 | grep -om1 'https://login\.tailscale\.com/[A-Za-z0-9/_-]*' || true)"
+    [ -n "$TSURL" ] && break; sleep 1
+  done
+  [ -n "$TSURL" ] && echo "  >>> JOIN THIS NODE TO YOUR TAILNET — open:  $TSURL" \
+                  || echo "  (URL not captured yet — run: podman logs -f fedora-desktop | grep login.tailscale.com)"
+fi
 echo
 echo "Reach it:"
-echo "  web  https://<public-ip>:${WEB_PORT}/guacamole/   (PUBLIC, the only public door; login core / GUAC_PW)"
+echo "  web  https://${PUBIP}:${WEB_PORT}/guacamole/   (PUBLIC, the only public door; login core / GUAC_PW)"
 [ -n "$FLEET_SSH" ] && echo "       + clientless fleet SSH tiles on the SAME door: $(printf '%s' "$FLEET_SSH" | tr ';' ',')   (no VPN needed)"
 for _i in 1 2 3 4 5; do
   eval "_un=\${USER${_i}_NAME:-}; _ua=\${USER${_i}_ACCESS:-none}"
   [ -n "$_un" ] && echo "       + user '$_un' — own web login + desktop; fleet access: $_ua"
 done
-echo "  ssh  ssh core@<tailnet-ip>                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
-echo "  mosh mosh --ssh='ssh' core@<tailnet-ip>    (over the tailnet — TAILNET-ONLY)"
-echo "  RDP  <tailnet-ip>:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"
-echo "  VNC  <tailnet-ip>:5900   (TAILNET-ONLY — only if RFB_PW was set; mirrors the RDP session)"
+echo "  ssh  ssh core@${TSIP}                 (Tailscale SSH, keyless — TAILNET-ONLY, no public ssh)"
+echo "  mosh mosh --ssh='ssh' core@${TSIP}    (over the tailnet — TAILNET-ONLY)"
+echo "  RDP  ${TSIP}:3389   (TAILNET-ONLY — mstsc / Windows App; login core / RDP_PW)"
+echo "  VNC  ${TSIP}:5900   (TAILNET-ONLY — only if RFB_PW was set; mirrors the RDP session)"
 echo "Desktop terminal -> 'claude' to reach the in-box agent. All ssh/mosh land in tmux 'main'."
+[ "$TSIP" = '<tailnet-ip>' ] && echo "  (the tailnet IP appears once this node joins — via the login URL above, then: podman exec fedora-desktop tailscale ip -4)" || true
