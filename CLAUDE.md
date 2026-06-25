@@ -165,11 +165,12 @@ fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is
 
 | Package | Pin | Source | Why required |
 |---|---|---|---|
-| xrdp | Fedora current | a | RDP server (:3389, tailnet-only) + the Xorg :10 session owner (the Guacamole web gateway fronts this session). Hard-deps `tigervnc-x11-server` → provides `x0vncserver`, the same-session VNC head — the OPTIONAL tailnet-only :5900 native-VNC mirror (armed by `RFB_PW`) |
-| xorgxrdp | Fedora current | a | Xorg backend modules xrdp drives (the X session everything attaches to) |
-| openh264 | Fedora current | a | H.264 encoder for xrdp's GFX pipeline (the `gfx.toml` H.264-first tuning) |
+| xrdp | Fedora current | a | RDP server (:3389, tailnet-only) + the Xorg :10 session owner (the Guacamole web gateway fronts this session). **hard-Requires the virtual `tigervnc-server-minimal`** (the only provider in F44 is `tigervnc-x11-server` → `x0vncserver`, the same-session VNC head for the OPTIONAL tailnet-only :5900 mirror armed by `RFB_PW`; `tigervnc-server-common` → `vncpasswd`). The standalone `Xvnc` binary + xrdp's own `libvnc.so` ship in those must-keep rpms but go unused once the Xorg/`libxup` backend is active — irreducible hard-dep closure (Principle 3), not removable |
+| xorgxrdp | Fedora current | a | Xorg backend modules xrdp drives (the X session everything attaches to). Activated by uncommenting `[Xorg]` (`code=20`) + `autorun=Xorg` in `xrdp.ini` — Fedora ships `[Xorg]` commented and only `[Xvnc]` active, so without that install.sh step incoming connections silently fall to Xvnc |
+| openh264 | fedora-cisco-openh264 repo (default-enabled, Fedora infra) | a | H.264 encoder for xrdp's GFX pipeline (the `gfx.toml` H.264-first tuning). Distinct default-on repo, not main fedora/updates — class-(a) by Fedora-infra-build. NOTE: GFX/H.264 is fed only by the Xorg/`libxup` backend (Xvnc uses the legacy bitmap path) AND Guacamole re-encodes to images, so it speeds only the native-RDP-over-tailnet localhost hop, never the public web hop |
 | guacd | Fedora current | a | Apache Guacamole proxy daemon (loopback `-b 127.0.0.1`); browser-protocol → local RDP |
 | libguac-client-rdp | Fedora current | a | guacd's RDP client plugin — the web door reaches the local RDP session through it |
+| libguac-client-ssh | Fedora current | a | guacd's SSH client plugin — the **clientless browser-SSH FLEET_SSH bastion tiles** (`protocol='ssh'` connections from `guac-db-provision.sh`) reach fleet hosts (dev box / VPS) over the tailnet through it. Installed in BOTH lineages |
 | tomcat | Fedora current | a | servlet container serving the `guacamole.war` webapp (+ the `guacamole-auth-ban` extension) on TLS :8443 |
 | tomcat-jakartaee-migration | Fedora current | a | Fedora's jakartaee-migration (`javax2jakarta`) — converts the upstream `guacamole.war` javax→jakarta for Tomcat 10.1 at build (class-a, replaces the old curl'd shaded jar) |
 | gnupg2 | Fedora current | a | the `gpg` CLI used at build to verify the `guacamole.war` + `guacamole-auth-ban` + `guacamole-auth-jdbc` + `guacamole-auth-totp` signatures against the pinned Apache key |

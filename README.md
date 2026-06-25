@@ -125,11 +125,12 @@ cloud is rclone-only.
 | glibc-langpack-en | harness | a | UTF-8 rendering for tmux/terminal |
 | nano | harness | a | one break-glass editor (Fedora's minimal base doesn't ship `vi` reliably) |
 | tailscale | remote-access | b | tailnet node + keyless Tailscale SSH (primary maintenance path); RDP/VNC/password-auth are reachable ONLY over the tailnet IP it provides. Official Tailscale dnf repo |
-| xrdp | desktop | a | the RDP server (:3389, **tailnet-only**). Pulls `tigervnc-x11-server` as a hard dep — which powers the optional VNC mirror |
-| xorgxrdp | desktop | a | the Xorg backend modules xrdp drives (the X session xrdp/guacd/x0vncserver all attach to) |
-| openh264 | desktop | a | H.264 encoder for xrdp's GFX pipeline (the `gfx.toml` H.264-first tuning) — efficient remote-desktop video |
+| xrdp | desktop | a | the RDP server (:3389, **tailnet-only**). Hard-Requires the virtual `tigervnc-server-minimal` (provided by `tigervnc-x11-server` → `x0vncserver`, which powers the optional :5900 VNC mirror; `tigervnc-server-common` → `vncpasswd`) |
+| xorgxrdp | desktop | a | the Xorg backend modules xrdp drives (the X session xrdp/guacd/x0vncserver all attach to; activated via the `[Xorg]`/`autorun=Xorg` uncomment in install.sh) |
+| openh264 | fedora-cisco-openh264 (default-on) | a | H.264 encoder for xrdp's GFX pipeline (the `gfx.toml` H.264-first tuning). Fed only by the Xorg backend + bypassed by Guacamole's image re-encode → speeds the native-RDP-over-tailnet hop only |
 | guacd | remote-access | a | Apache Guacamole proxy daemon (loopback `-b 127.0.0.1`); translates the browser's protocol to local RDP |
 | libguac-client-rdp | remote-access | a | guacd's RDP client plugin — the web door connects to the local RDP session through this |
+| libguac-client-ssh | remote-access | a | guacd's SSH client plugin — the clientless browser-SSH **fleet bastion tiles** reach the dev box / VPS over the tailnet through this (both lineages) |
 | tomcat | remote-access | a | servlet container that serves the Guacamole webapp on the TLS :8443 public door |
 | xfce4-session | desktop | a | the XFCE session manager (`startxfce4` entry point for the X session) |
 | xfwm4 | desktop | a | XFCE window manager |

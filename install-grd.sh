@@ -20,7 +20,7 @@ DNF="dnf -y --setopt=install_weak_deps=False"
 # web client is class-(c) (GPG-verified below); gnupg2 = the gpg CLI for that check.
 : "${GUAC_VERSION:?GUAC_VERSION ARG must be passed from Containerfile.grd}"
 : "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed from Containerfile.grd}"
-WEB_PKGS="guacd libguac-client-rdp tomcat tomcat-jakartaee-migration gnupg2"
+WEB_PKGS="guacd libguac-client-rdp libguac-client-ssh tomcat tomcat-jakartaee-migration gnupg2"
 echo ">>> fedora-desktop-grd web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'"
 # DB-backed auth (TOTP 2FA REQUIRES a database). MariaDB + JDBC driver are Fedora
 # class-(a) leaf packages; the two Guacamole extensions are class-(c) (GPG-verified

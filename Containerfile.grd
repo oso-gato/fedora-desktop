@@ -59,9 +59,10 @@ COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 
 VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
-# EXPOSE is metadata only (run.sh.grd / the Quadlet own the publish set). ONLY
-# 8443 (Guacamole web), 4444->22 (ssh), mosh are public; 3389 (GRD RDP) + 5900
-# (GRD VNC) are TAILNET-ONLY.
+# EXPOSE is metadata only (run.sh.grd owns the publish set — there is no grd Quadlet yet).
+# ONLY 8443 (Guacamole web) is published/public; ssh (:22), mosh (UDP 61001-62000), GRD RDP
+# (:3389-3394) and GRD VNC (:5900) are ALL TAILNET-ONLY (run.sh.grd never -p's them, and the
+# in-container nft guard drops them on non-lo/non-tailscale0) — matching Principle 7.
 EXPOSE 22 8443 3389 5900 61001-62000/udp
 
 # systemd is PID 1 — the GRD requirement. STOPSIGNAL per the systemd container
