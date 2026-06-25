@@ -82,6 +82,7 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 
 podman run -d --name fedora-desktop-grd \
     --hostname fedora-desktop-grd \
+    --pull=newer \
     --restart=always \
     --systemd=always \
     --cgroupns=host \
