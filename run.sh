@@ -24,10 +24,10 @@
 #               BOOTSTRAP_HOSTNAME (default 'erebus'), NOT the repo name 'fedora-bootstrap'
 #               (a non-tailnet name resolves to loopback → the tile hits the desktop's OWN
 #               key-only sshd → a dead password prompt). Use the 100.x tailnet IP if unsure.
-#               Reached over the desktop's SERVER-SIDE tailnet; REQUIRES
-#               FLEET_SSH_KEY=/path/to/key (bind-mounted, not baked). Keyless
-#               Tailscale-SSH does NOT work through guacd (check-mode browser
-#               re-auth can't be surfaced — confirmed dead, see ZTNA-ACCESS.md).
+#               Reached over the desktop's SERVER-SIDE tailnet via KEYLESS
+#               Tailscale-SSH — the tailnet `ssh` ACL must grant THIS node action
+#               `accept` (NOT `check`) to the targets, else the tile hangs on an
+#               un-answerable browser re-auth (see ZTNA-ACCESS.md). No key needed.
 #   USER{1..5}_NAME / _PW / _ACCESS (optional) — up to FIVE additional desktop users
 #               beyond core (core stays the admin). Each gets their OWN Guacamole web
 #               login (USERn_NAME / USERn_PW), their OWN desktop session, and their OWN
@@ -68,10 +68,11 @@ set -eu
 HEALTH_URL='https://127.0.0.1:8443/guacamole/'; BACKEND_PORT=3389
 IMAGE="${IMAGE:-localhost/fedora-desktop:latest}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; FLEET_SSH="${FLEET_SSH:-}"
-# FLEET_SSH_KEY — REQUIRED for the FLEET_SSH browser-SSH tiles to open (keyless
-# Tailscale-SSH does NOT work through guacd — see ZTNA-ACCESS.md). A private key file;
-# bind-mounted READ-ONLY; NEVER baked into the image (Principle 5). Empty array expands
-# to nothing when unset (no tiles open without it).
+# FLEET_SSH_KEY (optional) — only for a target whose REAL sshd is reachable on :22
+# (Tailscale SSH off / a non-tailnet bastion). It does NOT help Tailscale-SSH-fronted
+# targets — Tailscale SSH intercepts :22 and ignores the key; those use keyless
+# Tailscale-SSH (ACL `accept`, see above). A private key file, bind-mounted READ-ONLY,
+# NEVER baked (Principle 5). Empty array expands to nothing when unset.
 FLEET_SSH_KEY="${FLEET_SSH_KEY:-}"; KEY_MOUNT=()
 [ -n "$FLEET_SSH_KEY" ] && KEY_MOUNT=(-v "$FLEET_SSH_KEY":/etc/fedora-desktop/fleet_ssh_key:ro)
 # Multi-user (optional): up to 5 additional desktop users. Each gets its OWN persisted
