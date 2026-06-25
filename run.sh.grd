@@ -31,7 +31,8 @@
 #                `check`, for this node — else the tile hangs on a browser re-auth; ZTNA-ACCESS.md).
 #   USER{1..5}_NAME / _PW / _ACCESS (optional) up to 5 additional desktop users beyond core;
 #                each gets its OWN web login + headless GNOME session (own loopback port) +
-#                own /home volume. _ACCESS: none | dev | host | both (which fleet tiles show).
+#                own /home volume. _ACCESS: none | all | comma-list of tile hostnames (which fleet
+#                tiles show; tile label == tailnet hostname; core always gets all).
 #   RFB_PW       (accepted but IGNORED on grd v1 — RDP-only; native VNC is a follow-up)
 #   TS_AUTHKEY   (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
