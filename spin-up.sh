@@ -12,19 +12,8 @@
 # secret is read at the prompt, exported only to the child run.sh, never written here.)
 set -euo pipefail
 cd "$(dirname "$0")"
-# Lineage: xrdp (XFCE/X11, production) or grd (GNOME-Wayland headless, systemd-PID-1 —
-# EXPERIMENTAL, needs a cgroup-v2-delegating host). Override non-interactively: LINEAGE=grd.
-# The deploy-contract questions below are identical for both; only the run script differs.
-LINEAGE="${LINEAGE:-}"
-if [ -z "$LINEAGE" ]; then
-  while :; do
-    LINEAGE="$(ask 'Lineage? (xrdp = XFCE/X11, production | grd = GNOME-Wayland headless, EXPERIMENTAL)' xrdp)"
-    case "$LINEAGE" in xrdp|grd) break ;; *) echo "  pick: xrdp | grd" >&2 ;; esac
-  done
-fi
-RUN_SCRIPT=./run.sh; [ "$LINEAGE" = grd ] && RUN_SCRIPT=./run.sh.grd
-[ -x "$RUN_SCRIPT" ] || { echo "spin-up: $RUN_SCRIPT not found/executable in $(pwd)" >&2; exit 1; }
-[ "$LINEAGE" = grd ] && echo "spin-up: grd lineage — needs a cgroup-v2-delegating host; EXPERIMENTAL (xrdp is production). On one host, give grd a DISTINCT WEB_PORT from any xrdp box." >&2
+# Lineage (xrdp/grd) is resolved BELOW, after the prompt helpers — the interactive
+# selector uses ask(), so it must come after ask() is defined (override: LINEAGE=grd).
 
 # --- prompt helpers (prompts + status go to stderr so $() captures only the value) ---
 ask() {  # ask "<prompt>" ["<default>"]
@@ -69,6 +58,21 @@ valid_user() {  # 0 if a legal, non-reserved username
   case "$1" in core|root|tomcat|daemon|bin|sys|nobody) return 1 ;; esac
   return 0
 }
+
+# Lineage: xrdp (XFCE/X11, production) or grd (GNOME-Wayland headless, systemd-PID-1 —
+# EXPERIMENTAL, needs a cgroup-v2-delegating host). Override non-interactively: LINEAGE=grd.
+# The deploy-contract questions below are identical for both; only the run script differs.
+# (Resolved HERE, after the helpers above, because the interactive selector uses ask().)
+LINEAGE="${LINEAGE:-}"
+if [ -z "$LINEAGE" ]; then
+  while :; do
+    LINEAGE="$(ask 'Lineage? (xrdp = XFCE/X11, production | grd = GNOME-Wayland headless, EXPERIMENTAL)' xrdp)"
+    case "$LINEAGE" in xrdp|grd) break ;; *) echo "  pick: xrdp | grd" >&2 ;; esac
+  done
+fi
+RUN_SCRIPT=./run.sh; [ "$LINEAGE" = grd ] && RUN_SCRIPT=./run.sh.grd
+[ -x "$RUN_SCRIPT" ] || { echo "spin-up: $RUN_SCRIPT not found/executable in $(pwd)" >&2; exit 1; }
+[ "$LINEAGE" = grd ] && echo "spin-up: grd lineage — needs a cgroup-v2-delegating host; EXPERIMENTAL (xrdp is production). On one host, give grd a DISTINCT WEB_PORT from any xrdp box." >&2
 
 echo "=== fedora-desktop spin-up ===" >&2
 RDP_PW="$(choose_password "core's RDP/system password")"
