@@ -84,12 +84,15 @@ IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box sel
 # dev tile targets the fedora-dev workload (node 'fedora-dev'); the vps tile targets THIS
 # bootstrap host, whose tailnet name varies per deployment (e.g. 'erebus') — so ASK rather
 # than ship a wrong 'fedora-bootstrap' default that MagicDNS can't resolve. Power users can
-# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles use
-# KEYLESS Tailscale SSH — they only work once THIS desktop has joined the tailnet (a
-# TS_AUTHKEY below, or a later `tailscale up`) AND the targets accept Tailscale SSH for this
-# node (tailnet ACL). There is no fleet password.
+# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles require a
+# private key via FLEET_SSH_KEY=/path/to/key (export it before running this wizard; it is
+# bind-mounted read-only, never baked). KEYLESS Tailscale-SSH does NOT work through guacd — on a
+# check-mode tailnet it demands an interactive browser re-auth that guacd's libssh2 cannot
+# surface, so a keyless tile hangs forever (confirmed on a real deploy, see ZTNA-ACCESS.md). The
+# tiles also need THIS desktop on the tailnet (TS_AUTHKEY below, or a later `tailscale up`) so the
+# target's :22 is reachable. The matching PUBLIC key must be trusted on each target.
 if [ -z "${FLEET_SSH:-}" ]; then
-  echo "  Fleet SSH tiles (keyless Tailscale SSH; use each target's TAILNET node name):" >&2
+  echo "  Fleet SSH tiles (need FLEET_SSH_KEY — keyless does NOT work through guacd; use each target's TAILNET node name):" >&2
   dev_host="$(ask '  dev workload tailnet name (blank = no dev tile)' 'fedora-dev')"
   vps_host="$(ask '  bootstrap-host (VPS) tailnet name (blank = no vps tile)' '')"
   FLEET_SSH=""
