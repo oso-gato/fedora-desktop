@@ -112,7 +112,12 @@ for _i in 1 2 3 4 5; do
   eval "USER${_i}_ACCESS=\$_a"
   if ! id -u "$_n" >/dev/null 2>&1; then
     # CREATE non-privileged: NO -aG wheel, NO subuid/subgid row (rootless podman stays core-only).
-    if useradd -m -u "$((1000 + _i))" -s /bin/bash "$_n"; then
+    # Pin GID == UID == 1000+i (a per-user private group) so the PERSISTED /home/<user> volume's
+    # ownership is DETERMINISTIC across container recreations — useradd without -g auto-allocates the
+    # group GID, which can drift when the user set changes (uid stays pinned, gid wanders). Home stays
+    # 0700, so the per-user group is for stable ownership only, never cross-user access (isolation intact).
+    groupadd -g "$((1000 + _i))" "$_n" 2>/dev/null || true
+    if useradd -m -u "$((1000 + _i))" -g "$((1000 + _i))" -s /bin/bash "$_n"; then
       [ -e "/home/$_n/.bashrc" ] || cp -rT /etc/skel "/home/$_n" 2>/dev/null || true
       printf '%s\n' "$(cat /etc/fedora-desktop/xsession 2>/dev/null || echo startxfce4)" > "/home/$_n/.Xclients"
       chmod +x "/home/$_n/.Xclients"; chown -R "$_n:$_n" "/home/$_n"
