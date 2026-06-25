@@ -65,7 +65,7 @@ asuser(){ local u="$1"; shift; runuser -u "$u" -- "$@"; }
 # mkuser mirrors the #45 entrypoint create logic against a FRESH root-owned home (the bound
 # named-volume mount root): pin gid==uid, then chown the root-owned mount to the user (gate B).
 mkuser(){  # <name> <n>
-  local u="$1" n="$2" uid=$((1000+n))
+  local u="$1" n="$2" uid; uid=$((1000+n))
   mkdir -p "/home/$u"; chown root:root "/home/$u"; chmod 700 "/home/$u"   # simulate fresh volume mount
   groupadd -g "$uid" "$u" 2>/dev/null || true
   useradd -M -u "$uid" -g "$uid" -s /bin/bash "$u" 2>/dev/null || true     # -M: home (the volume) exists
