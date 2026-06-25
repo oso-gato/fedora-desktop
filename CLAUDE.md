@@ -359,10 +359,14 @@ containers; this is for cooperating users (Arthur + a wiki collaborator) on one 
 is per-user (each 0700 home); `core` remains the sole git-sync orchestrator (policy/CLAUDE.md).
 
 **PER-USER VOLUME OWNERSHIP + the OPTIONAL SHARED folder.** Each desktop user (incl. `core`) gets a
-persisted per-user `/home/<user>` volume owned by a **pinned GID == UID == 1000+n** (deterministic
-across container recreations — `useradd -u`/`-g` both pinned, not auto-allocated) at `0700`. The
-per-user group is for stable ownership ONLY, never cross-user access. Both lineages do this
-identically (`entrypoint.sh` / `entrypoint-grd.sh`). **Opt-in shared collaboration** (`ENABLE_SHARED`,
+persisted per-user `/home/<user>` volume owned by a **pinned UID `1000+n` + GID `8000+n`** (both
+pinned via `useradd -u`/`-g`, not auto-allocated, so ownership is deterministic across recreations)
+at `0700`. GID is the **reserved `8000+n` range, NOT `1000+n`** — the **1Password packages bake
+groups at gid 1001/1002/1003** (`onepassword`/`-mcp`/`-cli`), so a `1000+n` private group would
+collide with them (caught at real-deploy: `groupadd -g 1001` failed, `chown name:name` then crashed
+PID 1 under `set -e`); `8000+n` is clear of `core`(1000)/1Password(1001-3)/`deskshare`(6000). The
+chown is **numeric + non-fatal**. The per-user group is for stable ownership ONLY, never cross-user
+access. Both lineages do this identically (`entrypoint.sh` / `entrypoint-grd.sh`). **Opt-in shared collaboration** (`ENABLE_SHARED`,
 asked at spin-up): a single `2770 root:deskshare` (gid 6000) `/home/shared` volume that every desktop
 user can read+write, with a **default POSIX ACL** (`setfacl -d -m group:deskshare:rwx`) forcing group
 `rwx` on new files so collaboration is full read-write **regardless of each user's umask**. `deskshare`

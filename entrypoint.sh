@@ -112,15 +112,19 @@ for _i in 1 2 3 4 5; do
   eval "USER${_i}_ACCESS=\$_a"
   if ! id -u "$_n" >/dev/null 2>&1; then
     # CREATE non-privileged: NO -aG wheel, NO subuid/subgid row (rootless podman stays core-only).
-    # Pin GID == UID == 1000+i (a per-user private group) so the PERSISTED /home/<user> volume's
-    # ownership is DETERMINISTIC across container recreations — useradd without -g auto-allocates the
-    # group GID, which can drift when the user set changes (uid stays pinned, gid wanders). Home stays
-    # 0700, so the per-user group is for stable ownership only, never cross-user access (isolation intact).
-    groupadd -g "$((1000 + _i))" "$_n" 2>/dev/null || true
-    if useradd -m -u "$((1000 + _i))" -g "$((1000 + _i))" -s /bin/bash "$_n"; then
+    # Pin a per-user private group at GID 8000+i (a RESERVED range) so the PERSISTED /home/<user>
+    # volume's ownership is DETERMINISTIC across recreations — useradd without -g auto-allocates a GID
+    # that drifts when the user set changes. UID stays 1000+i (those are free). GID is 8000+i, NOT
+    # 1000+i, because the 1Password packages BAKE groups at gid 1001/1002/1003 (onepassword/-mcp/-cli):
+    # `groupadd -g 1001` would collide and `useradd -g 1001` would put the user in the onepassword group
+    # -> `chown name:name` then dies on the unknown group name and crashes PID 1 under set -e. 8000+i is
+    # clear of core(1000)/1Password(1001-3)/deskshare(6000). Home stays 0700: stable ownership only.
+    groupadd -g "$((8000 + _i))" "$_n" 2>/dev/null || true
+    if useradd -m -u "$((1000 + _i))" -g "$((8000 + _i))" -s /bin/bash "$_n"; then
       [ -e "/home/$_n/.bashrc" ] || cp -rT /etc/skel "/home/$_n" 2>/dev/null || true
       printf '%s\n' "$(cat /etc/fedora-desktop/xsession 2>/dev/null || echo startxfce4)" > "/home/$_n/.Xclients"
-      chmod +x "/home/$_n/.Xclients"; chown -R "$_n:$_n" "/home/$_n"
+      # NUMERIC + non-fatal chown: never resolve a group NAME (a failed groupadd must not crash PID 1).
+      chmod +x "/home/$_n/.Xclients"; chown -R "$((1000 + _i)):$((8000 + _i))" "/home/$_n" 2>/dev/null || true
     else
       echo "[users] useradd '$_n' failed — skipping"; eval "unset USER${_i}_NAME USER${_i}_PW"; continue
     fi

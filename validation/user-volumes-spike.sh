@@ -5,7 +5,7 @@
 # shared folder is wired into run.sh / spin-up.sh / the entrypoints.
 # ============================================================================
 # Proves, in a throwaway container, that:
-#   A  per-user homes get PINNED uid==gid==1000+n + 0700 -> deterministic ownership AND
+#   A  per-user homes get PINNED uid 1000+n / gid 8000+n + 0700 -> deterministic ownership AND
 #      ISOLATION: user B canNOT read user A's home (the vault/token security ceiling);
 #   B  a FRESH bound-volume mount root (root-owned) is correctly chown'd to the user — the
 #      grd gap #45 fixes (without it the user can't write ~);
@@ -62,23 +62,33 @@ no(){ printf '   FAIL  %s\n' "$1"; F=$((F+1)); }
 # runuser sets the FULL supplementary group set (initgroups) — the realistic login path.
 asuser(){ local u="$1"; shift; runuser -u "$u" -- "$@"; }
 
-# mkuser mirrors the #45 entrypoint create logic against a FRESH root-owned home (the bound
-# named-volume mount root): pin gid==uid, then chown the root-owned mount to the user (gate B).
-mkuser(){  # <name> <n>
-  local u="$1" n="$2" uid; uid=$((1000+n))
-  mkdir -p "/home/$u"; chown root:root "/home/$u"; chmod 700 "/home/$u"   # simulate fresh volume mount
-  groupadd -g "$uid" "$u" 2>/dev/null || true
-  useradd -M -u "$uid" -g "$uid" -s /bin/bash "$u" 2>/dev/null || true     # -M: home (the volume) exists
-  echo "$u:pw-$u-12345678" | chpasswd
-  chown -R "$u:$u" "/home/$u"; chmod 700 "/home/$u"                        # the #45 fix
-}
-mkuser alice 1     # member
-mkuser bob   2     # member
-mkuser carol 3     # NON-member (control)
+# REPRODUCE the production image: the 1Password packages BAKE groups at gid 1001/1002/1003
+# (onepassword/-mcp/-cli). A clean minimal image had these free, which is why an earlier
+# gid==uid==1000+n scheme passed here but CRASHED on the real deploy (`groupadd -g 1001` collided,
+# `chown name:name` died on the unknown group -> PID 1 exit 1 under set -e). Pre-bake them so this
+# spike now reproduces the collision and proves the gid-8000 fix avoids it.
+groupadd -g 1001 onepassword     2>/dev/null || true
+groupadd -g 1002 onepassword-mcp 2>/dev/null || true
+groupadd -g 1003 onepassword-cli 2>/dev/null || true
 
-echo "=== A/B: pinned ownership + the grd chown (fresh root-owned mount) ==="
-[ "$(stat -c '%u:%g' /home/alice)" = "1001:1001" ] && ok "alice home 1001:1001 (uid==gid pinned)" || no "alice home $(stat -c '%u:%g' /home/alice)"
-[ "$(stat -c '%u:%g' /home/bob)"   = "1002:1002" ] && ok "bob home 1002:1002"                     || no "bob home $(stat -c '%u:%g' /home/bob)"
+# mkuser mirrors the FIXED entrypoint create logic against a FRESH root-owned home (the bound
+# named-volume mount root): UID 1000+n, GID 8000+n (reserved, collision-free), NUMERIC non-fatal chown.
+mkuser(){  # <name> <n>
+  local u="$1" n="$2" uid gid; uid=$((1000+n)); gid=$((8000+n))
+  mkdir -p "/home/$u"; chown root:root "/home/$u"; chmod 700 "/home/$u"   # simulate fresh volume mount
+  groupadd -g "$gid" "$u" 2>/dev/null || true
+  useradd -M -u "$uid" -g "$gid" -s /bin/bash "$u" 2>/dev/null || true     # -M: home (the volume) exists
+  echo "$u:pw-$u-12345678" | chpasswd
+  chown -R "$uid:$gid" "/home/$u" 2>/dev/null || true; chmod 700 "/home/$u"   # NUMERIC, non-fatal (#fix)
+}
+mkuser alice 1     # member  -> uid 1001, gid 8001
+mkuser bob   2     # member  -> uid 1002, gid 8002
+mkuser carol 3     # NON-member control -> uid 1003, gid 8003
+
+echo "=== A/B: pinned ownership (uid 1000+n / gid 8000+n) avoids the 1Password gid collision ==="
+[ "$(stat -c '%u:%g' /home/alice)" = "1001:8001" ] && ok "alice home 1001:8001 (uid 1000+n, gid 8000+n pinned)" || no "alice home $(stat -c '%u:%g' /home/alice) (want 1001:8001)"
+[ "$(stat -c '%u:%g' /home/bob)"   = "1002:8002" ] && ok "bob home 1002:8002"                     || no "bob home $(stat -c '%u:%g' /home/bob) (want 1002:8002)"
+id -nG alice | tr ' ' '\n' | grep -qx onepassword && no "alice landed in the onepassword group (gid collision NOT avoided)" || ok "alice NOT in onepassword (gid 8001 cleared the 1001 collision)"
 [ "$(stat -c '%a' /home/alice)" = "700" ] && ok "alice home 0700" || no "alice home mode $(stat -c '%a' /home/alice)"
 asuser alice bash -c 'echo ok > /home/alice/probe' && ok "alice can write her own home (chown rescued the root-owned mount)" || no "alice CANNOT write her own home (grd-gap bug)"
 
