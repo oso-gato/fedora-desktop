@@ -1,5 +1,12 @@
 # Go-live validation — fedora-desktop (current main)
 
+> ## ✅ XRDP LINEAGE — GO-LIVE GREEN (erebus, 2026-06-25)
+> Full end-to-end production proof **PASSED** on the live host (`31.97.145.144`) on the
+> endpoint-verified image `9963a288` (`:latest`): healthy · Xorg backend · public web + TOTP ·
+> multi-user paint with **no polkit dialog** · **per-host grant matrix** · keyless fleet shells ·
+> cross-device resume · shared-folder collab · auth-ban. See **B — RESULTS** below. (grd lineage
+> still NOT a go-live multi-user/fleet box — separate follow-up.)
+
 The pre-go-live end-to-end check. Verdict from the design pass: **xrdp is the full,
 wired product — validate and ship it; grd is NOT a multi-user/fleet box yet** (its
 session primitive is proven, but `run.sh.grd` doesn't pass `USER*`/`FLEET_SSH`, the
@@ -97,8 +104,11 @@ in `fedora-desktop.container` (else extra users lose `/home` on recreation) and 
 
 ## B — RESULTS (real deploy on erebus, 2026-06-25)
 
-xrdp lineage, image `ghcr.io/oso-gato/fedora-desktop:latest`, multi-user (core + jenny/none +
-bob/both). **Caught and fixed a production-only crash during this pass** (see the gid note below).
+xrdp lineage, image `ghcr.io/oso-gato/fedora-desktop:latest` (endpoint-verified digest `9963a288`),
+multi-user. Two passes are recorded here: the **first** (core + jenny/none + bob/both) caught a
+production-only crash (the gid note below); the **final GREEN pass** (core + `bear-alchemist`/[erebus,
+fedora-dev] + `piguet-fatima`/[fedora-dev]) confirmed every gate on a container whose running image
+digest was verified to be the fixed build.
 
 | Gate | Status | Evidence |
 |---|---|---|
@@ -108,16 +118,28 @@ bob/both). **Caught and fixed a production-only crash during this pass** (see th
 | B7 Shared folder | ✅ PASS | jenny WROTE `/home/shared`, bob READ + APPENDED via the default `group:deskshare:rwx` ACL; `/home/shared` = `root:deskshare 2770`; bob DENIED jenny's `0700` home |
 | gid-collision fix | ✅ PASS | jenny home `jenny:jenny` **gid 8001** (the reserved 8000+n range) — the #45 `gid==uid==1000+n` scheme had collided with 1Password's baked gid 1001-1003 and crashed PID 1; **#48** moved GID→8000+n + made the chown numeric/non-fatal; redeploy clean |
 | B2-5 ★ Fleet tiles | ✅ PASS | keyless Tailscale-SSH through guacd: after setting this desktop node's tailnet `ssh` ACL to `accept` (was `check`), the `ssh-dev` + `ssh-vps` tiles open **live `core@` shells** on fedora-dev + erebus; both container probes return a clean `OK`, no check banner. **The fix was the tailnet ACL, not a key** — Tailscale SSH intercepts `:22` so `FLEET_SSH_KEY` never reaches the OS sshd (the earlier "key required" call was wrong, now corrected). The ACL `accept` lives in the tailnet admin console (outside this repo) — record it in the deploy runbook. |
-| B2-3/4 Multi-user/grant | ⏳ pending eyeball | jenny's own session + the access-grant matrix (UI click-through) |
-| B2-6 Cross-device resume | ⏳ pending | the bpp=24 device-A→device-B resume drill |
-| B2-7 auth-ban | ⏳ pending | 3 bad logins → ~900s lockout |
+| B3/B4 Multi-user paint + per-host grants | ✅ PASS | `core`/`bear-alchemist`/`piguet-fatima` each paint their OWN XFCE; tiles match the per-host grant exactly — `bear`→`ssh-erebus`+`ssh-fedora-dev`, `core`→all 3, **`piguet`→`ssh-fedora-dev` ONLY** (the comma-list matcher #57). Was straight-to-desktop on the stale image; correct on the verified one |
+| polkit dialog | ✅ PASS | **NO "XFCE PolicyKit Agent" error window** on any user's desktop — suppressed via `Hidden=true` in `/etc/xdg/autostart/xfce-polkit.desktop` (#64, source-validated against `xfce4-session`'s autostart reader) |
+| B2-6 Cross-device resume | ✅ PASS | `bear-alchemist` disconnect → reconnect from a different-sized device resumes the SAME session, apps still open (the bpp=24 `<User,BitPerPixel>` invariant) |
+| B2-7 auth-ban | ✅ PASS | ~5 bad web logins → source IP locked ~900s |
 
-**Verdict so far:** the deploy is healthy and the web / desktop / shared-folder / ownership /
-**fleet-shell** paths are all real-deploy-proven. **B5 PASSED** once the tailnet `ssh` ACL granted
-this desktop node `accept` (not `check`) to the fleet — keyless Tailscale-SSH then opens the tiles
-with no key and no redeploy. That ACL `accept` is a tailnet-policy (admin-console) setting OUTSIDE
-this repo, so it belongs in the deploy runbook, not a code change. B3/B4 (UI eyeball) + B6 (resume)
-+ B7-auth-ban remain to click through.
+**VERDICT: GREEN — full xrdp production proof passed end-to-end on erebus (2026-06-25), image
+`9963a288` (`ghcr.io/oso-gato/fedora-desktop:latest`), endpoint-verified.** Every gate — healthy,
+Xorg backend, public web + TOTP, multi-user paint with **no polkit dialog**, the **per-host grant
+matrix**, keyless fleet shells, cross-device resume, shared-folder collab, auth-ban — passed on a
+container whose **running image digest was confirmed** (`podman inspect <ctr> --format '{{.Image}}'`
+== the built digest) to be the verified build.
+
+**Two operator facts that belong in the deploy runbook (not code):**
+1. **The fleet `ssh` ACL must grant the desktop node `accept` (not `check`)** — a tailnet admin-console
+   setting; keyless Tailscale-SSH through guacd then opens the tiles, no key. A FRESH tailnet node
+   (after a `-state` wipe) needs this re-granted (tag the node / scope the rule).
+2. **★ Verify the RUNNING image, not just the registry/pull.** This proof was delayed ~2h by an
+   exported `IMAGE=…:xrdp` that made `spin-up.sh` silently deploy a FROZEN local tag while every
+   `podman pull` targeted `:latest` — the running container was never the fixed image. ALWAYS run
+   `podman inspect <ctr> --format '{{.Image}}'` and compare to the intended digest after deploy.
+   Mitigations now shipped: `spin-up.sh` prints the image it deploys (#65) and `run.sh`/`run.sh.grd`
+   use `--pull=newer` (#66) so a deploy fetches the current tag.
 
 ---
 
