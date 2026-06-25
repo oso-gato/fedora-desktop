@@ -13,8 +13,9 @@
 #         · both -> ssh-dev + ssh-vps/host
 #   S2  a both->dev DOWNGRADE actually REVOKES the stale tile (the DELETE-then-INSERT
 #       grant reconciliation, guac-db-provision must-do #3) — the highest-value check.
-#   S3  (informational) the grant labels are SUBSTRING-matched: a 'devops'/'devbox' tile
-#       is granted to a 'dev' user. A known sharp edge — use canonical dev/vps labels.
+#   S3  fleet-label matching: a non-canonical 'devops' tile against a 'dev' grant. With the
+#       exact-label fix (PR #43) it is DENIED (PASS); with the old substring matcher it leaked
+#       (WARN). Robust to both so it reads correctly pre- and post-merge.
 #
 # This proves the TILES + GRANTS are built correctly. It does NOT and CAN NOT prove the
 # real door: a Guacamole tile opening an actual SSH shell on the dev box / VPS OVER
@@ -138,17 +139,16 @@ check dave  "ssh-dev"            # the stale ssh-vps grant must be GONE (reconci
 check alice ""                   # unchanged
 check core  "ssh-dev,ssh-vps"    # unchanged
 
-echo "=== Scenario 3 (informational): SUBSTRING grant matching ==="
+echo "=== Scenario 3: fleet-label matching (exact vs substring) ==="
 export FLEET_SSH="dev fedora-dev 22 core;devops 10.0.0.9 22 core;vps erebus 22 core"
 export USER2_ACCESS=dev; unset USER3_NAME USER4_NAME   # just bob(dev) against dev+devops+vps
 ( guac_db_provision ) >/tmp/prov3.log 2>&1 || { echo "FATAL: provision S3 failed"; tail -30 /tmp/prov3.log; exit 1; }
 _bob="$(tiles_for bob)"
-if [ "$_bob" = "ssh-dev,ssh-devops" ]; then
-  echo "   NOTE  bob(dev) -> [$_bob]  — 'devops' matched the *dev* substring (a 'dev' grant"
-  echo "         leaks any label containing 'dev'). Known sharp edge: use canonical dev/vps labels."
-else
-  echo "   bob(dev) -> [$_bob]  (substring behavior differs from expectation — inspect)"
-fi
+case "$_bob" in
+  "ssh-dev")            echo "   PASS  bob(dev) -> [$_bob]  — EXACT-label matching (PR #43): the non-canonical 'devops' tile is correctly DENIED to a 'dev' grant." ;;
+  "ssh-dev,ssh-devops") echo "   WARN  bob(dev) -> [$_bob]  — SUBSTRING matching: 'devops' leaked into the 'dev' grant. Expected ONLY pre-#43; if seen after the exact-label fix merges, it regressed." ;;
+  *)                    echo "   bob(dev) -> [$_bob]  (unexpected — inspect)" ;;
+esac
 
 echo "======================================================================"
 echo "[guac-fleet] grant-matrix gates: PASS=$P FAIL=$F (S1 5 checks + S2 3 checks)"

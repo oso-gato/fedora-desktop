@@ -8,8 +8,11 @@
 # <User,BitPerPixel> to a distinct per-user Xorg ":1x" session. This spike proves, on a
 # host, that:
 #   - a headless xorgxrdp Xorg + XFCE session PAINTS on llvmpipe (no GPU, no seat), and
-#   - N DISTINCT usernames -> ONE :3389 -> N distinct painted :1x sessions (multi-user),
-#   - reconnect at the SAME bpp resumes the SAME session (the bpp=24 invariant).
+#   - N DISTINCT usernames -> ONE :3389 -> N distinct painted :1x sessions (multi-user).
+# It does NOT test cross-device RESUME: there is no reconnect / different-geometry / bpp-mismatch
+# case here. The bpp=24 <User,BitPerPixel> resume invariant rests on sesman Policy=Default
+# semantics + the static pins (color-depth=24 / max_bpp=24) and is REAL-DEPLOY-ONLY (the
+# reconnect-resumes-the-same-session + max_bpp-coerces-a-16/32bpp-client gates: GO-LIVE B2).
 #
 # BACKEND: Fedora 44 ships xrdp.ini with [Xorg] COMMENTED and only [Xvnc] active, so a stock
 # install serves Xvnc (libvnc) — NOT the xorgxrdp Xorg session the lineage is built for.
@@ -27,7 +30,8 @@
 # HOST-VALIDATION-PROCESS.md) and cannot be a throwaway spike.
 #
 # GATES (per user): A systemd-free xrdp+sesman up · B a per-user :1x session spawns ·
-#   C :3389 listening · D a real RDP client renders a NON-BLACK XFCE frame · E resume.
+#   C :3389 listening · D a real RDP client renders a NON-BLACK XFCE frame.
+#   (RESUME is deliberately NOT a gate here — it is real-deploy-only, see above.)
 #
 # HOST PREREQS: podman; (for Gate D) a freerdp client + Xvfb + ImageMagick (import/convert).
 # ============================================================================
