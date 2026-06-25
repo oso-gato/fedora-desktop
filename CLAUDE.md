@@ -204,6 +204,7 @@ fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is
 | xdg-utils | Fedora current | a | `xdg-open` — `obsidian://` scheme + opening links from apps |
 | gnome-keyring | Fedora current | a | Secret Service provider backing libsecret for app credential storage |
 | openssl | Fedora current | a | `keytool`/PKCS12 context for minting the Guacamole TLS keystore at runtime |
+| acl | Fedora current | a | `setfacl` — the default POSIX ACL on the OPTIONAL `/home/shared` collaboration folder (`ENABLE_SHARED`) that forces group `rwx` on new files, giving full read-write collab regardless of umask (host-validated, `validation/user-volumes-spike.sh`). Both lineages |
 | firefox | Fedora current | a | in-desktop browser — rclone OAuth, claude.ai, web login flows |
 | code | Microsoft yum repo | b | VS Code — the maintainer-dev editor (`gpgcheck=1`, `repo_gpgcheck=1` — repo-metadata signature parity with the 1Password/Tailscale repos) |
 | 1password | 1Password dnf repo | b | 1Password GUI — credential vault (`gpgcheck=1`, `repo_gpgcheck=1`) |
@@ -356,6 +357,19 @@ ONE shared container** — one kernel, SELinux-disabled, `SYS_ADMIN`/`NET_ADMIN`
 sandbox: a kernel priv-esc collapses it. For mutually-distrusting users you would run separate
 containers; this is for cooperating users (Arthur + a wiki collaborator) on one box. The vault
 is per-user (each 0700 home); `core` remains the sole git-sync orchestrator (policy/CLAUDE.md).
+
+**PER-USER VOLUME OWNERSHIP + the OPTIONAL SHARED folder.** Each desktop user (incl. `core`) gets a
+persisted per-user `/home/<user>` volume owned by a **pinned GID == UID == 1000+n** (deterministic
+across container recreations — `useradd -u`/`-g` both pinned, not auto-allocated) at `0700`. The
+per-user group is for stable ownership ONLY, never cross-user access. Both lineages do this
+identically (`entrypoint.sh` / `entrypoint-grd.sh`). **Opt-in shared collaboration** (`ENABLE_SHARED`,
+asked at spin-up): a single `2770 root:deskshare` (gid 6000) `/home/shared` volume that every desktop
+user can read+write, with a **default POSIX ACL** (`setfacl -d -m group:deskshare:rwx`) forcing group
+`rwx` on new files so collaboration is full read-write **regardless of each user's umask**. `deskshare`
+is a **supplementary** group only — homes stay `0700`, so the shared space does NOT weaken the vault/
+token isolation. Host-validated end-to-end in `validation/user-volumes-spike.sh` (pinned ownership,
+0700 isolation, 2770 + setgid + ACL collab, non-member denied). The `/home/shared` volume is bound by
+`run.sh`/`run.sh.grd` only when `ENABLE_SHARED` is set.
 
 **HOST-VALIDATION (Principle 9 — none provable in the nested engine; flag at deploy):**
 (a) 0 extra users still SSOs `core` straight to a tile list unchanged; (b) 1–2 users each get an

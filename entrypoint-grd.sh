@@ -54,6 +54,21 @@ for _n in 1 2 3 4 5; do
 done
 loginctl enable-linger core >/dev/null 2>&1 || true
 
+# ---- optional SHARED collaboration folder (ENABLE_SHARED) — parity with xrdp ----
+# A single 2770 root:deskshare volume at /home/shared every desktop user can read/write, with a
+# DEFAULT POSIX ACL forcing group rwx on new files (umask-independent full read-write collab;
+# host-validated, validation/user-volumes-spike.sh). Homes stay 0700: deskshare is SUPPLEMENTARY
+# only, never a primary/home group. Volume bound by run.sh.grd only when ENABLE_SHARED is set.
+if [ -n "${ENABLE_SHARED:-}" ]; then
+    groupadd -g 6000 deskshare 2>/dev/null || true
+    install -d -m 2770 -o root -g deskshare /home/shared
+    chown root:deskshare /home/shared; chmod 2770 /home/shared
+    setfacl -d -m group:deskshare:rwx /home/shared 2>/dev/null || true
+    setfacl    -m group:deskshare:rwx /home/shared 2>/dev/null || true
+    for _m in "${USERNAMES[@]}"; do usermod -aG deskshare "$_m" 2>/dev/null || true; done
+    echo "[shared] /home/shared enabled (group deskshare; members: ${USERNAMES[*]})"
+fi
+
 # ---- key-only ssh: sync core's authorized_keys from github.com/oso-gato.keys -
 runuser -u core -- bash -c '
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
