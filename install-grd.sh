@@ -87,6 +87,51 @@ systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.servic
 # spawned by gdm/gnome-headless-session@ — see below — not by this marker.)
 mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/core
 
+# ---- sshd hardening + persistent host keys + fail2ban jail (xrdp harness parity) ----
+# install-grd enabled sshd/rsyslog/fail2ban as units, but without these configs the grd
+# ssh door ran STOCK Fedora sshd (password-auth posture unhardened), regenerated host keys
+# every recreation (MITM-warning churn), and fail2ban watched nothing. Byte-equivalent to
+# the xrdp install.sh drop-ins (install.sh:186-198, 213-227). ssh is :22, tailnet-only.
+cat > /etc/ssh/sshd_config.d/99-fedora-desktop.conf <<'EOF'
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+MaxAuthTries 3
+PermitRootLogin no
+AllowUsers core
+HostKey /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
+# AUTHPRIV so rsyslog captures auth events to /var/log/secure for fail2ban.
+SyslogFacility AUTHPRIV
+LogLevel VERBOSE
+EOF
+rm -f /etc/ssh/ssh_host_*_key*   # never ship host keys in a published image
+# Persistent host key on the bound state volume, minted BEFORE sshd starts. The xrdp
+# entrypoint does this inline; the systemd idiom is an ExecStartPre drop-in so it runs
+# regardless of the firstboot oneshot's ordering (sshd.service is enabled independently).
+install -d -m 0755 /etc/systemd/system/sshd.service.d
+cat > /etc/systemd/system/sshd.service.d/10-persistent-hostkey.conf <<'EOF'
+[Service]
+ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/tailscale/hostkeys
+ExecStartPre=/bin/bash -c '[ -f /var/lib/tailscale/hostkeys/ssh_host_ed25519_key ] || ssh-keygen -t ed25519 -N "" -f /var/lib/tailscale/hostkeys/ssh_host_ed25519_key'
+EOF
+# fail2ban jail: brute-force lockout on ssh, reading rsyslog's /var/log/secure, with tailnet
+# CGNAT (100.64/10) + loopback ignore'd. nftables backend (no firewalld). Identical to xrdp.
+install -d -m 0755 /etc/fail2ban/jail.d
+cat > /etc/fail2ban/jail.d/sshd-fedora-desktop.local <<'EOF'
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = auto
+ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
+banaction = nftables[type=multiport]
+
+[sshd]
+enabled = true
+port = 22
+logpath = /var/log/secure
+EOF
+
 # ---- every interactive remote login lands in the persistent tmux workspace ----
 # Harness parity with the xrdp lineage (this drop-in was previously absent on grd,
 # so ssh/mosh logins got a plain shell with no tmux continuity). Each login gets
@@ -117,6 +162,120 @@ setw -g aggressive-resize on
 set-hook -g client-attached 'refresh-client'
 set-hook -g client-resized  'refresh-client'
 EOF
+
+# ============================================================================
+# claudebox: nested rootless podman + eager assemble (core's DEV capability)
+# ============================================================================
+# Functional parity with the xrdp lineage's supervised-bash claudebox machinery
+# (entrypoint.sh: the rootless podman API socket + first-boot live-clone-or-seed +
+# eager `claudebox-assemble.sh`), re-expressed in the systemd-PID-1 idiom: a core
+# `systemd --user` socket + oneshot under linger. WITHOUT this, `claude`/claudebox is
+# DEAD on grd (no CONTAINER_HOST, no engine socket, the box is never assembled) — a
+# regression of core's headline dev capability. Containerfile.grd COPYs the box FILES;
+# this block is what ENABLES them.
+
+# 1) The rootless podman API socket = the CONTAINER_HOST target the box's `podman` drives
+#    (it provides /run/user/1000/podman/podman.sock, the path claudebox-init.sh exports).
+#    Fedora ships the user unit; --global enables it for core's lingered manager. Workers
+#    get only their own idle socket — no CONTAINER_HOST (gated to uid 1000 in claudebox-init)
+#    and no /etc/subuid row — so it stays core-only by construction (the xrdp 0700-dir boundary).
+systemctl --global enable podman.socket
+
+# 2) First-boot bootstrap, run AS core via a `systemd --user` oneshot: seed/clone the LIVE
+#    spec to ~/.local/share/fedora-dev, then eagerly assemble the claudebox ONCE
+#    (claudebox-assemble.sh writes the .assembled marker + stamps the CONTAINER_HOST bridge
+#    + the managed policy/gate-push hook via `podman exec claudebox`). Mirrors entrypoint.sh's
+#    live-clone-or-seed + eager-assemble; NON-FATAL — a dev-box seed failure must never take
+#    down the desktop / web door (the desktop is primary on fedora-desktop).
+install -d -m 0755 /usr/local/libexec   # OFF $PATH (the no-loose-binary CI backstop scans $PATH)
+cat > /usr/local/libexec/grd-claudebox-bootstrap.sh <<'BOOTSTRAP_EOF'
+#!/usr/bin/env bash
+# grd: first-boot live-spec seed/clone + eager claudebox assemble, AS core.
+# systemd --user re-expression of the xrdp entrypoint's live-clone-or-seed + eager assemble.
+set -u
+live=/home/core/.local/share/fedora-dev
+seed=/usr/local/share/fedora-dev
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+mkdir -p "$(dirname "$live")" "$HOME/.local/state/claudebox"
+
+if [ -d "$live/.git" ]; then
+    echo "[live-spec] git clone already present at $live"
+elif [ -f "$live/.seeded-no-git" ]; then
+    echo "[live-spec] seeded-no-git state present; convert per CONVERT-TO-GIT.md"
+else
+    cloned=0
+    for attempt in 1 2 3 4 5; do
+        git clone --depth 1 https://github.com/oso-gato/fedora-desktop "$live" 2>/dev/null && { cloned=1; break; }
+        echo "[live-spec] clone attempt $attempt failed; retrying in $((attempt*5))s"; sleep $((attempt*5))
+    done
+    if [ "$cloned" = 1 ]; then
+        ( cd "$live" && git config --local user.email "claudebox@fedora-desktop.local" \
+                     && git config --local user.name  "claudebox" )
+        echo "[live-spec] cloned from GitHub + git identity initialized"
+    else
+        echo "[live-spec] GitHub unreachable after 5 attempts — seeding files only (no git)"
+        mkdir -p "$live"; cp -rT "$seed" "$live"; date -Iseconds > "$live/.seeded-no-git"
+        cat > "$live/CONVERT-TO-GIT.md" <<'NOTE'
+# This live spec was seeded from the baked image because GitHub was unreachable at first
+# boot. box-rebuild / daily-tick / watcher work (they read files); the propose-and-commit
+# cycle is BLOCKED until you convert. Once the box has internet to GitHub:
+#     cd ~/.local/share/fedora-dev
+#     rm -f .seeded-no-git CONVERT-TO-GIT.md
+#     git init && git remote add origin https://github.com/oso-gato/fedora-desktop
+#     git fetch --depth 1 origin main && git reset --hard origin/main
+#     git config --local user.email "claudebox@fedora-desktop.local"
+#     git config --local user.name  "claudebox"
+NOTE
+    fi
+fi
+
+# Eager assemble ONCE (claudebox-assemble.sh writes the .assembled marker on success).
+if [ ! -e "$HOME/.local/state/claudebox/.assembled" ]; then
+    echo "[first-boot] assembling claudebox…"
+    bash "$live/claudebox-assemble.sh" > "$HOME/.local/state/claudebox/first-assemble.log" 2>&1 < /dev/null \
+        && echo "[first-boot] claudebox ready" \
+        || echo "[first-boot] assemble FAILED — see ~/.local/state/claudebox/first-assemble.log"
+fi
+BOOTSTRAP_EOF
+chmod 0755 /usr/local/libexec/grd-claudebox-bootstrap.sh
+
+# core-only (ConditionUser): workers (uid 1001+) have no subuid/CONTAINER_HOST, so skip in
+# their `systemd --user` managers. Ordered After=podman.socket so the engine target exists.
+cat > /etc/systemd/user/claudebox-bootstrap.service <<'UNIT_EOF'
+[Unit]
+Description=fedora-desktop-grd: seed live spec + eager-assemble the claudebox (core)
+ConditionUser=core
+After=podman.socket
+Wants=podman.socket
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/grd-claudebox-bootstrap.sh
+[Install]
+WantedBy=default.target
+UNIT_EOF
+systemctl --global enable claudebox-bootstrap.service
+
+# 3) NON-vault cloud-sync + vault git-sync — core `systemd --user` services with
+#    Restart=always (the systemd equivalent of the xrdp entrypoint's 30s respawn loops,
+#    entrypoint.sh:600-601). Both scripts self-loop, no-op when unconfigured, tolerate
+#    absence. Prefer the LIVE clone's copy (so live edits take effect), fall back to the
+#    baked seed. vault-gitsync is the one push the promotion gate allowlists (data continuity).
+for _svc in cloud-sync vault-gitsync; do
+cat > "/etc/systemd/user/${_svc}.service" <<UNIT_EOF
+[Unit]
+Description=fedora-desktop-grd: ${_svc} (core)
+ConditionUser=core
+After=claudebox-bootstrap.service
+[Service]
+ExecStart=/bin/bash -c 'p=/home/core/.local/share/fedora-dev/bin/${_svc}.sh; [ -f "\$p" ] || p=/usr/local/share/fedora-dev/bin/${_svc}.sh; exec bash "\$p"'
+Restart=always
+RestartSec=30
+[Install]
+WantedBy=default.target
+UNIT_EOF
+systemctl --global enable "${_svc}.service"
+done
 
 # ---- GRD variant-1 headless desktop: gdm as session FACTORY (HOST-VALIDATED) ----
 # Each desktop user gets a headless AUTOLOGIN session spawned on demand by gdm via
