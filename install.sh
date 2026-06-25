@@ -295,7 +295,7 @@ $DNF install \
     mesa-dri-drivers mesa-libgbm \
     dejavu-sans-fonts google-noto-sans-fonts adwaita-icon-theme \
     nss atk at-spi2-atk cups-libs gtk3 alsa-lib libnotify libsecret \
-    xdg-utils gnome-keyring openssl \
+    xdg-utils gnome-keyring openssl acl \
     firefox \
     code 1password 1password-cli
 

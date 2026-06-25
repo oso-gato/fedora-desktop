@@ -125,11 +125,21 @@ while [ "$i" -lt "$N" ]; do
   export "USER${i}_NAME=$u" "USER${i}_PW=$p" "USER${i}_ACCESS=$a"
 done
 
+# --- optional shared collaboration folder (only meaningful with >=1 extra user) ---
+# A 2770 group-owned /home/shared that core + every extra user can read/write (default POSIX ACL
+# -> full read-write regardless of umask). Homes stay 0700-isolated; the shared GROUP is
+# supplementary only. Host-validated (validation/user-volumes-spike.sh). Override: ENABLE_SHARED=1.
+ENABLE_SHARED="${ENABLE_SHARED:-}"
+if [ -z "$ENABLE_SHARED" ] && [ "$N" -gt 0 ]; then
+  [ "$(ask 'Add a SHARED collaboration folder (/home/shared) all desktop users can read+write? (y/n)' n)" = y ] && ENABLE_SHARED=1
+fi
+
 # --- summary + confirm ---
 {
   echo; echo "=== summary ==="
   echo "  web door  : https://<host>:${WEB_PORT}/guacamole/   (login: core / <GUAC_PW>)"
   echo "  fleet tiles: ${FLEET_SSH:-(none)}"
+  echo "  shared fldr: ${ENABLE_SHARED:+/home/shared — all desktop users, read+write (group deskshare)}${ENABLE_SHARED:-(none)}"
   echo "  core       : admin — Desktop + Dev + VPS"
   j=0
   while [ "$j" -lt "$N" ]; do
@@ -138,5 +148,5 @@ done
 } >&2
 [ "$(ask 'Spin up the container now? (y/n)' y)" = y ] || { echo "aborted (nothing launched)" >&2; exit 0; }
 
-export RDP_PW GUAC_PW WEB_PORT FLEET_SSH TS_AUTHKEY IMAGE
+export RDP_PW GUAC_PW WEB_PORT FLEET_SSH TS_AUTHKEY IMAGE ENABLE_SHARED
 exec "$RUN_SCRIPT"

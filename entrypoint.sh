@@ -132,6 +132,27 @@ for _i in 1 2 3 4 5; do
   echo "[users] provisioned non-dev wiki worker '$_n' (uid $(id -u "$_n"))"
 done
 
+# ---- optional SHARED collaboration folder (ENABLE_SHARED) -------------------
+# A single 2770 root:deskshare volume at /home/shared that every desktop user (core + each
+# provisioned USERn) can read/write — with a DEFAULT POSIX ACL forcing group rwx on new files
+# so collaboration is FULL read-write regardless of each user's umask (host-validated:
+# validation/user-volumes-spike.sh). Homes stay 0700: deskshare is a SUPPLEMENTARY group only,
+# never anyone's primary/home group, so the per-user vault/token isolation is untouched. The
+# /home/shared volume is bound by run.sh ONLY when ENABLE_SHARED is set; here we group-own +
+# ACL it and add the members. Idempotent (the volume + group may already exist on restart).
+if [ -n "${ENABLE_SHARED:-}" ]; then
+    groupadd -g 6000 deskshare 2>/dev/null || true
+    install -d -m 2770 -o root -g deskshare /home/shared
+    chown root:deskshare /home/shared; chmod 2770 /home/shared
+    # default ACL -> new files inherit group rwx (umask-independent); access ACL on the dir too.
+    setfacl -d -m group:deskshare:rwx /home/shared 2>/dev/null || true
+    setfacl    -m group:deskshare:rwx /home/shared 2>/dev/null || true
+    _members="core"
+    for _i in 1 2 3 4 5; do eval "_n=\${USER${_i}_NAME:-}"; [ -n "$_n" ] && _members="$_members $_n"; done
+    for _m in $_members; do usermod -aG deskshare "$_m" 2>/dev/null || true; done
+    echo "[shared] /home/shared enabled (group deskshare; members: $_members)"
+fi
+
 # ---- rootless podman needs a runtime dir (no systemd/PAM session manager) ---
 install -d -m 0700 -o core -g core /run/user/1000
 

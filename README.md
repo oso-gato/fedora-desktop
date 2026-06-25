@@ -158,6 +158,7 @@ cloud is rclone-only.
 | xdg-utils | apps | a | `xdg-open` etc. — `obsidian://` scheme handling + opening links from apps |
 | gnome-keyring | apps | a | Secret Service provider (the keyring backing libsecret for app credential storage) |
 | openssl | remote-access | a | `keytool`/PKCS12 plumbing context for minting the Guacamole TLS keystore at runtime |
+| acl | desktop | a | `setfacl` for the optional shared collaboration folder (`/home/shared`) — a default ACL gives all desktop users full read-write regardless of umask, while homes stay `0700` |
 | firefox | apps | a | the in-desktop browser — authorizes rclone OAuth, reaches claude.ai, web login flows |
 | code | apps | b | VS Code — the maintainer-dev editor. Official Microsoft yum repo (`gpgcheck=1`) |
 | 1password | apps | b | 1Password GUI — credential vault. Official 1Password dnf repo (`gpgcheck=1`, `repo_gpgcheck=1`) |

@@ -62,7 +62,7 @@ $DNF install \
     gnome-terminal nautilus \
     gdm accountsservice python3-gobject \
     gnome-remote-desktop pipewire pipewire-libs wireplumber \
-    xorg-x11-server-Xwayland mesa-dri-drivers mesa-libgbm openssl \
+    xorg-x11-server-Xwayland mesa-dri-drivers mesa-libgbm openssl acl \
     ${WEB_PKGS} \
     ${DB_PKGS} \
     firefox rclone \
