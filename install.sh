@@ -544,14 +544,17 @@ fi
 # theme and a SOLID desktop colour (no photographic wallpaper => smaller initial
 # dirty-region encode on connect). XFCE is GTK3, so it rides the already-installed GTK
 # stack (Firefox/Electron) — no second toolkit resident at runtime (vs LXQt's Qt6/KF6).
-# The XFCE PolicyKit agent (xfce-polkit — a hard-dep of xfce4-session, not directly chosen) is
-# DEAD in this lineage: the no-systemd xrdp harness runs no polkitd / system D-Bus, so it can
-# only autostart, fail to register an authentication agent, and pop an "XFCE PolicyKit Agent"
-# error dialog at every login. polkit privilege-escalation is non-functional BY DESIGN here
-# (see the desktop note above), so mask the dead autostart for ALL users.
-if [ -f /etc/xdg/autostart/xfce-polkit.desktop ]; then
-  printf 'Hidden=true\n' >> /etc/xdg/autostart/xfce-polkit.desktop
-fi
+# The XFCE PolicyKit agent (xfce-polkit — a hard-dep of xfce4-session, so it CANNOT be dnf-removed
+# without taking XFCE with it) is DEAD in this lineage: the no-systemd xrdp harness runs no polkitd
+# / system D-Bus, so it can only autostart, fail to register an authentication agent, and pop an
+# "XFCE PolicyKit Agent" error dialog at every login. polkit privilege-escalation is non-functional
+# BY DESIGN here (see the desktop note above). DELETE the autostart launcher outright — a file that
+# does not exist cannot be autostarted by any session. (We previously appended `Hidden=true` to it,
+# but that is the WRONG mechanism: per the XDG/XFCE autostart spec `Hidden=true` is honored for a
+# USER-level ~/.config/autostart override that SHADOWS the system file, NOT as an in-place edit of
+# the /etc/xdg/autostart file — host-verified ineffective: the agent still launched. rm is the
+# bulletproof, mechanism-independent disable, applied for ALL users incl. ones added later.)
+rm -f /etc/xdg/autostart/xfce-polkit.desktop
 XFCONF=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
 install -d -m 0755 "$XFCONF"
 cat > "$XFCONF/xfwm4.xml" <<'XML'
