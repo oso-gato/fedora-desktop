@@ -97,9 +97,34 @@ IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box sel
 # `tailscale up`). FLEET_SSH_KEY is only for a target whose real sshd is reachable on :22 (Tailscale
 # SSH off / a non-tailnet bastion) — it does NOT help Tailscale-SSH-fronted targets.
 if [ -z "${FLEET_SSH:-}" ]; then
-  echo "  Fleet SSH tiles (keyless Tailscale-SSH; needs the tailnet ACL 'accept' for this node; use each target's TAILNET node name):" >&2
-  dev_host="$(ask '  dev workload tailnet name (blank = no dev tile)' 'fedora-dev')"
-  vps_host="$(ask '  bootstrap-host (VPS) tailnet name (blank = no vps tile)' '')"
+  # 'dev'/'vps' are FIXED role labels (the access-grant keys + tile names) — NOT tailnet names.
+  # You choose which actual tailnet NODE each label points at. We resolve your choice against the
+  # live tailnet (`tailscale status` on this host) and store the node's TAILNET IP, because: (1) it
+  # makes a typo impossible — a non-peer is rejected here instead of failing silently at the tile;
+  # (2) the desktop container's tailscaled runs without --accept-dns, so MagicDNS NAMES may not
+  # resolve INSIDE the container — the resolved IP always does.
+  tnet_peers() { tailscale status 2>/dev/null | awk '$1 ~ /^100\./ {print $1"\t"$2}'; }
+  pick_peer() {  # <label> <prompt> <default> — echoes the host to use (resolved IP when possible)
+    local lbl="$1" prompt="$2" def="$3" v ip
+    while :; do
+      v="$(ask "$prompt" "$def")"
+      [ -z "$v" ] && { printf ''; return 0; }                              # blank = no tile
+      command -v tailscale >/dev/null 2>&1 || { printf '%s' "$v"; return 0; }  # no CLI: can't validate, accept as-is
+      case "$v" in 100.*) printf '%s' "$v"; return 0 ;; esac                # explicit tailnet IP: accept
+      ip="$(tnet_peers | awk -v n="$v" -F'\t' '$2==n {print $1; exit}')"
+      [ -n "$ip" ] && { echo "    ✓ $lbl → $v ($ip)" >&2; printf '%s' "$ip"; return 0; }
+      echo "    ✗ '$v' is not a live tailnet peer — pick a name from the list above, or enter its 100.x IP" >&2
+    done
+  }
+  echo "  Fleet SSH tiles — keyless Tailscale-SSH; needs the tailnet ACL 'accept' for THIS node." >&2
+  if command -v tailscale >/dev/null 2>&1; then
+    echo "  Registered tailnet peers (choose the NODE for each role label):" >&2
+    tnet_peers | sed 's/^/      /' >&2
+  else
+    echo "  (tailscale CLI not on this host — entries can't be validated; they must resolve inside the container)" >&2
+  fi
+  dev_host="$(pick_peer dev '  dev box — tailnet hostname or 100.x IP (blank = no dev tile)' 'fedora-dev')"
+  vps_host="$(pick_peer vps '  vps/bootstrap box — tailnet hostname or 100.x IP (blank = no vps tile)' '')"
   FLEET_SSH=""
   [ -n "$dev_host" ] && FLEET_SSH="dev ${dev_host} 22 core"
   [ -n "$vps_host" ] && FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}vps ${vps_host} 22 core"
