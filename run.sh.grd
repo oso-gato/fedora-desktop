@@ -42,7 +42,11 @@ set -eu
 : "${RDP_PW:?set RDP_PW (core system + GRD RDP password)}"
 : "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
 HEALTH_PATH="/guacamole/"
-IMAGE="${IMAGE:-localhost/fedora-desktop-grd:latest}"
+# Default to the CI-published, cosign-signed GHCR image (CI tags the grd lineage `:grd`; only
+# xrdp gets `:latest`). The host never builds locally, so a `localhost/...` default left a direct
+# `./run.sh.grd` (the non-interactive contract, bypassing spin-up) pointing at an image that does
+# not exist on a fresh host. With `--pull=newer` below, this default fetches the current `:grd`.
+IMAGE="${IMAGE:-ghcr.io/oso-gato/fedora-desktop:grd}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; WEB_PORT="${WEB_PORT:-8443}"
 FLEET_SSH="${FLEET_SSH:-}"
 # FLEET_SSH_KEY (optional) — only for a target whose REAL sshd is reachable on :22; it does NOT
