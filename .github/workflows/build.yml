@@ -22,7 +22,7 @@ permissions:
   contents: read
   packages: write
   pull-requests: read
-  # (no id-token: cosign now signs with a KEY, not keyless OIDC — see "Sign image".)
+  id-token: write  # OIDC for cosign keyless signing
 
 jobs:
   # ==========================================================================
@@ -257,17 +257,12 @@ jobs:
           no-cache: ${{ github.event_name == 'schedule' }}
           tags: ${{ steps.meta.outputs.tags }}
 
-      # Key-based cosign signing — signs THIS variant's IMMUTABLE digest with the
-      # fleet cosign private key (CI secret COSIGN_PRIVATE_KEY + pass-phrase
-      # COSIGN_PASSWORD). The host enforces it via policy.json -> sigstoreSigned
-      # { keyData: <the matching public key> } using podman's NATIVE verification
-      # (no cosign on the host). Keyless OIDC was dropped: podman's policy.json
-      # matches only a subjectEmail, never a GitHub Actions workflow-URI identity.
+      # Keyless cosign signing via GitHub Actions OIDC — signs THIS variant's IMMUTABLE
+      # digest. Host policy.json -> sigstoreSigned (pinned to this OIDC identity) is
+      # Arthur's one-time item; until then the signature is an audit trail.
       - name: Sign image with cosign
         if: github.event_name != 'pull_request'
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/fedora-desktop
           DIGEST: ${{ steps.build.outputs.digest }}
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
