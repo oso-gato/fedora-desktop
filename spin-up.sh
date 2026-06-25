@@ -106,31 +106,36 @@ if [ -z "${FLEET_SSH:-}" ]; then
         printf '    %2d) %-24s %s\n' "${#_pk_ip[@]}" "$_name" "$_ip" >&2
       fi
     done < <(tnet_peers)
-    [ "${#_pk_ip[@]}" -eq 0 ] && echo "    (no SSH-reachable peers found — type a hostname/IP)" >&2
+    [ "${#_pk_ip[@]}" -eq 0 ] && echo "    (no SSH-reachable peers found — no fleet tiles; export \$FLEET_SSH to set them by hand)" >&2
   else
-    echo "  (tailscale CLI not on this host — type hostnames/IPs; can't validate or probe)" >&2
+    echo "  (tailscale CLI not on this host — no fleet tiles; export \$FLEET_SSH to set them by hand)" >&2
   fi
-  echo "  Add fleet tiles — enter a NUMBER above, or a tailnet hostname/IP. Blank = done." >&2
+  # Single number-only multi-select from the SSH-enabled list above: choose which hosts to ENABLE
+  # as fleet tiles (pick by NUMBER, never by IP). Each picked host -> a tile labeled by its tailnet
+  # hostname, stored with its resolved tailnet IP. These ARE the tiles offered to each user below.
   FLEET_SSH=""
-  while :; do
-    sel="$(ask '    tile (number | hostname | 100.x IP | blank=done)' '')"
-    [ -z "$sel" ] && break
-    _tn=""; _ti=""
-    if printf '%s' "$sel" | grep -Eq '^[0-9]+$' && [ "$sel" -ge 1 ] && [ "$sel" -le "${#_pk_ip[@]}" ]; then
-      _tn="${_pk_name[$((sel-1))]}"; _ti="${_pk_ip[$((sel-1))]}"
-    elif printf '%s' "$sel" | grep -Eq '^100\.'; then
-      _ti="$sel"; _tn="$(tnet_peers | awk -v ip="$sel" -F'\t' '$1==ip{print $2; exit}')"; [ -n "$_tn" ] || _tn="$sel"
-    elif command -v tailscale >/dev/null 2>&1; then
-      _ti="$(tnet_peers | awk -v n="$sel" -F'\t' '$2==n{print $1; exit}')"
-      [ -n "$_ti" ] && _tn="$sel" || { echo "      ✗ '$sel' is not a live tailnet peer — use a number, a listed name, or a 100.x IP" >&2; continue; }
-    else
-      _tn="$sel"; _ti="$sel"                    # no CLI: accept verbatim (must resolve in-container)
-    fi
-    case " ${FLEET_TILE[*]:-} " in *" $_tn "*) echo "      (already added '$_tn')" >&2; continue ;; esac
-    FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}${_tn} ${_ti} 22 core"
-    FLEET_TILE+=("$_tn")
-    echo "      ✓ tile '$_tn' → $_ti" >&2
-  done
+  if [ "${#_pk_ip[@]}" -gt 0 ]; then
+    while :; do
+      sel="$(ask '  Enable which hosts as fleet tiles? (numbers like 1,3 | all | none)' none)"
+      FLEET_SSH=""; FLEET_TILE=()
+      case "$sel" in
+        none|NONE|None) break ;;
+        all|ALL|All)
+          for _x in "${!_pk_ip[@]}"; do
+            FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}${_pk_name[$_x]} ${_pk_ip[$_x]} 22 core"; FLEET_TILE+=("${_pk_name[$_x]}")
+          done; break ;;
+        *) _ok=1
+          for _num in $(printf '%s' "$sel" | tr ',' ' '); do
+            if printf '%s' "$_num" | grep -Eq '^[0-9]+$' && [ "$_num" -ge 1 ] && [ "$_num" -le "${#_pk_ip[@]}" ]; then
+              _x=$((_num-1)); _nm="${_pk_name[$_x]}"
+              case " ${FLEET_TILE[*]:-} " in *" $_nm "*) ;; *) FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}${_nm} ${_pk_ip[$_x]} 22 core"; FLEET_TILE+=("$_nm") ;; esac
+            else echo "    ✗ '$_num' is not a host number (1-${#_pk_ip[@]})" >&2; _ok=0; break; fi
+          done
+          [ "$_ok" = 1 ] && [ "${#FLEET_TILE[@]}" -gt 0 ] && break ;;
+      esac
+    done
+    [ "${#FLEET_TILE[@]}" -gt 0 ] && { echo "  ✓ fleet tiles enabled:" >&2; for _t in "${FLEET_TILE[@]}"; do echo "      • $_t" >&2; done; }
+  fi
 fi
 # Tile labels for the per-user grant prompt — derive from FLEET_SSH so a pre-set $FLEET_SSH works too.
 if [ -n "${FLEET_SSH:-}" ] && [ "${#FLEET_TILE[@]}" -eq 0 ]; then
