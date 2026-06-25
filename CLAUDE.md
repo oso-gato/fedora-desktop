@@ -323,8 +323,8 @@ so a `both`→`dev` downgrade actually REVOKES the stale tile), with the fleet S
 deduped into shared objects under one org group. A `none` user genuinely cannot see or reach
 the fleet. On EVERY login (TOTP applies to all DB identities) the user enrolls/uses a TOTP code;
 a removed user is DISABLED (not deleted), preserving their enrollment. **Security note on
-grants:** a `dev`/`host` tile reaches that box over the desktop's tailnet via `FLEET_SSH_KEY`
-publickey auth to `core@<target>` = a **`core` (admin) shell** there — so granting `dev`/`host` is an admin-level
+grants:** a `dev`/`host` tile reaches that box over the desktop's tailnet via keyless Tailscale-SSH
+(the tailnet `ssh` ACL must grant this desktop node `accept`, not `check`) as `core@<target>` = a **`core` (admin) shell** there — so granting `dev`/`host` is an admin-level
 grant, NOT a sandboxed login (per-user identities on dev/host would need accounts provisioned
 there — a cross-repo follow-up). Each user's web password == their OS password (one credential;
 SSO) **plus their TOTP second factor**. (grd is now multi-user too: core + USER1..5, each a

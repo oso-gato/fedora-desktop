@@ -74,20 +74,28 @@ default `erebus`) — **not** the repo name `fedora-bootstrap`, which is not a t
 resolves to loopback, landing the tile on the desktop's own key-only sshd (a dead password
 prompt). Use the target's `100.x` tailnet IP if MagicDNS is unreliable inside the container.
 
-**Auth for the SSH tiles** — Principle-5-clean, no secret baked into any layer. The open
-host-validation item below is now **RESOLVED on a real deploy (erebus, 2026-06-25)**, and it
-settles which path is mandatory:
-- **REQUIRED — runtime key (`FLEET_SSH_KEY`):** `FLEET_SSH_KEY=/path/to/key ./run.sh` bind-mounts a
-  private key to `/etc/fedora-desktop/fleet_ssh_key` (read-only, never in an image layer); applied to
-  every tile. The target must trust the matching **public** key (`oso-gato.keys` / its `authorized_keys`).
-  This is the path that actually opens a shell through guacd.
-- **Keyless Tailscale-SSH does NOT work through guacd — confirmed dead, do not rely on it.** Routing
-  is fine (the tile reaches the target's `:22`), but on a **check-mode** tailnet Tailscale-SSH demands
-  an interactive browser re-auth (`To authenticate, visit: https://login.tailscale.com/…`). guacd's
-  libssh2 cannot surface that prompt, so the tile hangs at *"Connected to Guacamole. Waiting for
-  response…"* forever. Host-key verification was never the blocker (guacd does **no** host-key
-  verification by default — Guacamole L1 manual); the interactive-auth handoff is. So a fleet tile
-  **requires `FLEET_SSH_KEY`** — keyless is not a usable fallback for the browser-SSH tiles.
+**Auth for the SSH tiles** — Principle-5-clean, no secret baked into any layer. **RESOLVED on a
+real deploy (erebus, 2026-06-25): keyless Tailscale-SSH works through guacd — the lever is the
+tailnet ACL action, NOT a key.**
+- **Keyless Tailscale-SSH (the path for Tailscale-SSH-fronted targets — this whole fleet):** guacd
+  connects to the target's tailnet `IP:22`; the target's tailscaled intercepts `:22` and
+  authenticates **this desktop node by its tailnet identity** (no key, no password). The one
+  requirement is the tailnet **`ssh` ACL action be `accept`, NOT `check`**, for the headless desktop
+  node → the fleet targets. `check` mode demands a periodic interactive **browser** re-auth
+  (`To authenticate, visit: https://login.tailscale.com/…`) that a headless node cannot perform —
+  guacd's libssh2 can't surface the URL — so under `check` the tile hangs at *"Connected to
+  Guacamole. Waiting for response…"* forever; under `accept` it connects clean. **Verified:** with
+  the desktop node granted `accept`, the `dev`/`vps` tiles open live `core@` shells on fedora-dev +
+  erebus (both probes return a clean `OK`, no check banner). Scope the rule tight —
+  `{ "action":"accept", "src":["tag:fedora-desktop"], "dst":["<fleet>"], "users":["core"] }` — the
+  node is already a trusted tailnet member via its authkey. Host-key verification is a non-issue
+  (guacd does **no** host-key verification by default — Guacamole L1 manual).
+- **`FLEET_SSH_KEY` does NOT apply to Tailscale-SSH-fronted targets:** Tailscale SSH intercepts `:22`
+  and replaces key auth with tailnet identity, so a bind-mounted key **never reaches the OS `sshd`**
+  (verified: a key probe to fedora-dev `:22` still hit the Tailscale-SSH check, not OpenSSH).
+  `FLEET_SSH_KEY=/path/to/key ./run.sh` (mounted RO at `/etc/fedora-desktop/fleet_ssh_key`, applied
+  to every tile) is the right mechanism **only** for a target whose real `sshd` is reachable on
+  `:22` — i.e. Tailscale SSH off, or a non-tailnet bastion.
 
 **Packaging:** `libguac-client-ssh` is a **Fedora class-(a)** package — no new source-purity cost.
 **Firewall:** unchanged — RDP/VNC/native-SSH stay tailnet-only behind the nft guard; only `:8443`

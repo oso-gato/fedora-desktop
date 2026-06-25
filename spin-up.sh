@@ -84,15 +84,16 @@ IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box sel
 # dev tile targets the fedora-dev workload (node 'fedora-dev'); the vps tile targets THIS
 # bootstrap host, whose tailnet name varies per deployment (e.g. 'erebus') — so ASK rather
 # than ship a wrong 'fedora-bootstrap' default that MagicDNS can't resolve. Power users can
-# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles require a
-# private key via FLEET_SSH_KEY=/path/to/key (export it before running this wizard; it is
-# bind-mounted read-only, never baked). KEYLESS Tailscale-SSH does NOT work through guacd — on a
-# check-mode tailnet it demands an interactive browser re-auth that guacd's libssh2 cannot
-# surface, so a keyless tile hangs forever (confirmed on a real deploy, see ZTNA-ACCESS.md). The
-# tiles also need THIS desktop on the tailnet (TS_AUTHKEY below, or a later `tailscale up`) so the
-# target's :22 is reachable. The matching PUBLIC key must be trusted on each target.
+# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles use KEYLESS
+# Tailscale-SSH over the tailnet — the target's tailscaled authenticates THIS desktop node by its
+# tailnet identity (no key, no fleet password). Requirement: the tailnet `ssh` ACL must grant this
+# node action `accept` (NOT `check`) to the targets — `check` demands an interactive browser
+# re-auth a headless node can't do, so the tile hangs (confirmed on a real deploy, see
+# ZTNA-ACCESS.md). The tiles also need THIS desktop on the tailnet (TS_AUTHKEY below, or a later
+# `tailscale up`). FLEET_SSH_KEY is only for a target whose real sshd is reachable on :22 (Tailscale
+# SSH off / a non-tailnet bastion) — it does NOT help Tailscale-SSH-fronted targets.
 if [ -z "${FLEET_SSH:-}" ]; then
-  echo "  Fleet SSH tiles (need FLEET_SSH_KEY — keyless does NOT work through guacd; use each target's TAILNET node name):" >&2
+  echo "  Fleet SSH tiles (keyless Tailscale-SSH; needs the tailnet ACL 'accept' for this node; use each target's TAILNET node name):" >&2
   dev_host="$(ask '  dev workload tailnet name (blank = no dev tile)' 'fedora-dev')"
   vps_host="$(ask '  bootstrap-host (VPS) tailnet name (blank = no vps tile)' '')"
   FLEET_SSH=""
