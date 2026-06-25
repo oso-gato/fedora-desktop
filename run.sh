@@ -32,14 +32,15 @@
 #               beyond core (core stays the admin). Each gets their OWN Guacamole web
 #               login (USERn_NAME / USERn_PW), their OWN desktop session, and their OWN
 #               persisted /home volume (fedora-desktop-userN). USERn_ACCESS picks which
-#               fleet tiles their login shows: none (Desktop only) | dev | host | both.
+#               fleet tiles their login shows: none | all | a comma-list of tile hostnames
+#               (e.g. 'fedora-dev,onyx'). Tile label == tailnet hostname; core always gets all.
 #               Username: lowercase ^[a-z_][a-z0-9_-]{0,30}$, not core/root.
 #               Tip: the interactive `spin-up.sh` wizard ASKS all of this (count 0-5, then
 #               per-user name / password / access) and calls this script for you.
 #   TS_AUTHKEY  (optional) unattended tailnet join.   IMAGE (optional) local build.
 #
 #   RDP_PW='…' GUAC_PW='…' [WEB_PORT=8443] [RFB_PW='…'] [FLEET_SSH='…'] \
-#     [USER1_NAME=jenny USER1_PW='…' USER1_ACCESS=none] [USER2_NAME=bob USER2_PW='…' USER2_ACCESS=both] \
+#     [USER1_NAME=jenny USER1_PW='…' USER1_ACCESS=none] [USER2_NAME=bob USER2_PW='…' USER2_ACCESS=all] \
 #     [… up to USER5 …] [TS_AUTHKEY=…] ./run.sh        # or just: ./spin-up.sh  (interactive)
 #
 # ACCESS MODEL (load-bearing — do NOT widen the publish set):
