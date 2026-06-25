@@ -26,8 +26,8 @@
 #                SAME public web door — ';'-list "label host [port] [user]", e.g.
 #                FLEET_SSH='dev fedora-dev 22 core;vps erebus 22 core' (host = the TAILNET
 #                node name / 100.x IP; reached over the desktop's server-side tailnet).
-#   FLEET_SSH_KEY=/path/to/key (optional) private key for the fleet tiles (bind-mounted RO,
-#                never baked); else keyless Tailscale-SSH.
+#   FLEET_SSH_KEY=/path/to/key (REQUIRED for fleet tiles to open) private key, bind-mounted
+#                RO, never baked. Keyless Tailscale-SSH does NOT work through guacd (ZTNA-ACCESS.md).
 #   USER{1..5}_NAME / _PW / _ACCESS (optional) up to 5 additional desktop users beyond core;
 #                each gets its OWN web login + headless GNOME session (own loopback port) +
 #                own /home volume. _ACCESS: none | dev | host | both (which fleet tiles show).
@@ -43,8 +43,9 @@ HEALTH_PATH="/guacamole/"
 IMAGE="${IMAGE:-localhost/fedora-desktop-grd:latest}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"; RFB_PW="${RFB_PW:-}"; WEB_PORT="${WEB_PORT:-8443}"
 FLEET_SSH="${FLEET_SSH:-}"
-# FLEET_SSH_KEY (optional) — private key for the browser-SSH fleet tiles (else keyless
-# Tailscale-SSH); bind-mounted READ-ONLY, never baked (Principle 5).
+# FLEET_SSH_KEY — REQUIRED for the browser-SSH fleet tiles to open (keyless Tailscale-SSH
+# does NOT work through guacd — see ZTNA-ACCESS.md); private key, bind-mounted READ-ONLY,
+# never baked (Principle 5).
 FLEET_SSH_KEY="${FLEET_SSH_KEY:-}"; KEY_MOUNT=()
 [ -n "$FLEET_SSH_KEY" ] && KEY_MOUNT=(-v "$FLEET_SSH_KEY":/etc/fedora-desktop/fleet_ssh_key:ro)
 # Multi-user (optional): up to 5 additional desktop users; each gets its OWN persisted
