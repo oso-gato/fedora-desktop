@@ -81,6 +81,11 @@ for _i in 1 2 3 4 5; do
   eval "_un=\${USER${_i}_NAME:-}"
   [ -n "$_un" ] && USER_VOLS+=(-v "fedora-desktop-user${_i}:/home/${_un}")
 done
+# Optional SHARED collaboration folder (ENABLE_SHARED): a single persisted volume bound at
+# /home/shared that the entrypoint group-owns (2770 root:deskshare) + ACLs for read-write
+# collab across all desktop users. Bound ONLY when enabled; homes stay 0700 (see entrypoint).
+ENABLE_SHARED="${ENABLE_SHARED:-}"; SHARED_VOL=()
+[ -n "$ENABLE_SHARED" ] && SHARED_VOL=(-v fedora-desktop-shared:/home/shared)
 # WEB_PORT — the web gateway is the ONLY public door; its host port is changeable
 # at spin-up (DEFAULT 8443). Everything else — ssh, mosh, RDP, VNC — is TAILNET-ONLY
 # (never published; reached over the tailnet IP / Tailscale SSH).
@@ -97,6 +102,7 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
   [ -n "$TS_AUTHKEY" ] && printf 'TS_AUTHKEY=%q\n' "$TS_AUTHKEY"
   [ -n "$FLEET_SSH" ]  && printf 'FLEET_SSH=%q\n'  "$FLEET_SSH"
+  [ -n "$ENABLE_SHARED" ] && printf 'ENABLE_SHARED=%q\n' "$ENABLE_SHARED"
   for _i in 1 2 3 4 5; do
     eval "_un=\${USER${_i}_NAME:-}; _up=\${USER${_i}_PW:-}; _ua=\${USER${_i}_ACCESS:-none}"
     [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%q\nUSER%s_PW=%q\nUSER%s_ACCESS=%q\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
@@ -114,6 +120,7 @@ podman run -d --name fedora-desktop \
     -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
     "${KEY_MOUNT[@]}" \
     "${USER_VOLS[@]}" \
+    "${SHARED_VOL[@]}" \
     -v fedora-desktop-home:/home/core \
     -v fedora-desktop-state:/var/lib/tailscale \
     -v fedora-desktop-cert:/var/lib/guac-cert \
