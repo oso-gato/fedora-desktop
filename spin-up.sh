@@ -91,7 +91,12 @@ if [ -n "${IMAGE:-}" ]; then
   echo "  NOTE: using IMAGE from the environment -> $IMAGE" >&2
   echo "        (image prompt skipped; run 'unset IMAGE' first to choose interactively / take the GHCR default)" >&2
 fi
-IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box self-validation only)' 'ghcr.io/oso-gato/fedora-desktop:latest')}"
+# The default tag is LINEAGE-AWARE: CI tags xrdp as :latest (= :xrdp) and grd as :grd. A flat
+# :latest default would pull the XRDP image for a grd deploy and run it under run.sh.grd
+# (--systemd=always) — the xrdp image has no systemd-PID-1, so the box would not come up. Default
+# to :grd when LINEAGE=grd, else :latest.
+_default_img="ghcr.io/oso-gato/fedora-desktop:$([ "$LINEAGE" = grd ] && echo grd || echo latest)"
+IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box self-validation only)' "$_default_img")}"
 
 # Fleet SSH tiles: clientless browser-SSH tiles to OTHER tailnet hosts, on the SAME public web door
 # (VPN-slot-free fleet access — see ZTNA-ACCESS.md). Each tile's LABEL == its tailnet HOSTNAME; add
