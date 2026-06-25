@@ -37,8 +37,18 @@ for _n in 1 2 3 4 5; do
     [ -n "$_un" ] && [ -n "$_up" ] || continue
     case "$_un" in core|root|gdm|gnome-remote-desktop|tomcat|mysql) echo "[grd] refusing reserved username '$_un'" >&2; continue;; esac
     echo "$_un" | grep -qE '^[a-z_][a-z0-9_-]{0,30}$' || { echo "[grd] invalid username '$_un' — skipped" >&2; continue; }
-    id "$_un" >/dev/null 2>&1 || useradd -m -u "$((1000 + _n))" -s /bin/bash "$_un"
+    if ! id "$_un" >/dev/null 2>&1; then
+        # Pin GID == UID == 1000+n (per-user private group) so the PERSISTED /home/<user> volume's
+        # ownership is deterministic across recreations — parity with the xrdp lineage.
+        groupadd -g "$((1000 + _n))" "$_un" 2>/dev/null || true
+        useradd -m -u "$((1000 + _n))" -g "$((1000 + _n))" -s /bin/bash "$_un"
+        # Own the BOUND per-user /home volume: a fresh named volume's mount root is root-owned and
+        # useradd -m won't chown a pre-existing mountpoint, so without this the user can't write ~.
+        # The xrdp lineage already does this (entrypoint.sh); grd was MISSING it. Home stays 0700.
+        chown -R "$_un:$_un" "/home/$_un" 2>/dev/null || true
+    fi
     echo "${_un}:${_up}" | chpasswd
+    chmod 700 "/home/$_un" 2>/dev/null || true   # 0700 per-user isolation (idempotent, parity with xrdp)
     loginctl enable-linger "$_un" >/dev/null 2>&1 || true
     USERNAMES+=("$_un"); USERPWS+=("$_up"); USERUIDS+=("$((1000 + _n))"); USERPORTS+=("$((RDP_BASE_PORT + _n))")
 done
