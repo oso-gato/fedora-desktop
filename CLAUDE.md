@@ -315,17 +315,19 @@ grant is a pure "wiki worker" (desktop + vault, zero dev reach).
 DB-backed (MariaDB + `guacamole-auth-jdbc`) with TOTP 2FA (`guacamole-auth-totp`), emitted by
 the shared `bin/guac-db-provision.sh` as idempotent SQL. Each identity is a `guacamole_entity`
 + `guacamole_user` (password-only UPSERT — never touches the TOTP seed) with READ on its own
-loopback-RDP desktop connection (SSO). `core`/`GUAC_PW` → Desktop **+ ALL Dev/VPS FLEET_SSH
-bastion tiles**. Each extra user → their own Desktop **+ only the bastion tiles their
-`USERn_ACCESS` grant allows** (`none` → Desktop only; `dev` → the dev tile; `host` → the vps
-tile; `both` → both) — now enforced by per-connection READ grants (DELETE-then-INSERT each boot,
-so a `both`→`dev` downgrade actually REVOKES the stale tile), with the fleet SSH connections
-deduped into shared objects under one org group. A `none` user genuinely cannot see or reach
-the fleet. On EVERY login (TOTP applies to all DB identities) the user enrolls/uses a TOTP code;
+loopback-RDP desktop connection (SSO). The fleet is **N browser-SSH tiles, each LABELED by its
+tailnet hostname** (the spin-up wizard lists SSH-reachable tailnet peers — a live `:22` probe — and
+you pick any number of them; the resolved tailnet IP is stored). `core`/`GUAC_PW` → Desktop **+ ALL
+fleet tiles**. Each extra user → their own Desktop **+ only the tiles their `USERn_ACCESS` grant
+allows**, where `USERn_ACCESS` is **`none` | `all` | a comma-list of tile hostnames** (e.g.
+`fedora-dev,onyx`) — enforced by per-connection READ grants (DELETE-then-INSERT each boot, so a
+grant downgrade actually REVOKES the stale tile), exact-whole-token matched fail-closed in
+`guac-db-provision.sh`, with the fleet SSH connections deduped into shared objects under one org
+group. A `none` user genuinely cannot see or reach the fleet. On EVERY login (TOTP applies to all DB identities) the user enrolls/uses a TOTP code;
 a removed user is DISABLED (not deleted), preserving their enrollment. **Security note on
-grants:** a `dev`/`host` tile reaches that box over the desktop's tailnet via keyless Tailscale-SSH
-(the tailnet `ssh` ACL must grant this desktop node `accept`, not `check`) as `core@<target>` = a **`core` (admin) shell** there — so granting `dev`/`host` is an admin-level
-grant, NOT a sandboxed login (per-user identities on dev/host would need accounts provisioned
+grants:** any granted fleet tile reaches that box over the desktop's tailnet via keyless Tailscale-SSH
+(the tailnet `ssh` ACL must grant this desktop node `accept`, not `check`) as `core@<target>` = a **`core` (admin) shell** there — so granting a fleet tile is an admin-level
+grant, NOT a sandboxed login (per-user identities on the fleet hosts would need accounts provisioned
 there — a cross-repo follow-up). Each user's web password == their OS password (one credential;
 SSO) **plus their TOTP second factor**. (grd is now multi-user too: core + USER1..5, each a
 gdm-spawned per-user headless GNOME session served by its own `gnome-remote-desktop-headless` on its

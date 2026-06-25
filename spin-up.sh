@@ -82,52 +82,64 @@ WEB_PORT="$(ask 'Public web-door port' 8443)"
 # self-validation only (the host never builds locally — CI builds). Default to GHCR here.
 IMAGE="${IMAGE:-$(ask 'Image ref (host deploy = ghcr.io; localhost/ = in-box self-validation only)' 'ghcr.io/oso-gato/fedora-desktop:latest')}"
 
-# core is the admin and ALWAYS gets the Dev/VPS fleet tiles — there is NO gate at the core
-# level; WHICH additional users ALSO get them is asked per-user below. FLEET_SSH defines WHERE
-# the fleet targets live, and each per-tile hostname is the target's TAILNET node name. The
-# dev tile targets the fedora-dev workload (node 'fedora-dev'); the vps tile targets THIS
-# bootstrap host, whose tailnet name varies per deployment (e.g. 'erebus') — so ASK rather
-# than ship a wrong 'fedora-bootstrap' default that MagicDNS can't resolve. Power users can
-# still export $FLEET_SSH to override the whole spec verbatim. NOTE: the fleet tiles use KEYLESS
-# Tailscale-SSH over the tailnet — the target's tailscaled authenticates THIS desktop node by its
-# tailnet identity (no key, no fleet password). Requirement: the tailnet `ssh` ACL must grant this
-# node action `accept` (NOT `check`) to the targets — `check` demands an interactive browser
-# re-auth a headless node can't do, so the tile hangs (confirmed on a real deploy, see
-# ZTNA-ACCESS.md). The tiles also need THIS desktop on the tailnet (TS_AUTHKEY below, or a later
-# `tailscale up`). FLEET_SSH_KEY is only for a target whose real sshd is reachable on :22 (Tailscale
-# SSH off / a non-tailnet bastion) — it does NOT help Tailscale-SSH-fronted targets.
+# Fleet SSH tiles: clientless browser-SSH tiles to OTHER tailnet hosts, on the SAME public web door
+# (VPN-slot-free fleet access — see ZTNA-ACCESS.md). Each tile's LABEL == its tailnet HOSTNAME; add
+# as many as you like by picking from the live tailnet. core (admin) ALWAYS gets ALL tiles; each
+# extra user gets a chosen SUBSET (asked per-user below). Auth is KEYLESS Tailscale-SSH — the
+# target's tailnet `ssh` ACL must grant THIS node action `accept` (NOT `check`: a headless node
+# can't satisfy check's browser re-auth, so the tile would hang — confirmed on a real deploy).
+# FLEET_SSH_KEY is only for a target whose REAL sshd is on :22 (Tailscale SSH off / a non-tailnet
+# bastion). Power users can export $FLEET_SSH ("label host port user", ';'-separated) to skip the picker.
+tnet_peers() { tailscale status 2>/dev/null | awk '$1 ~ /^100\./ {print $1"\t"$2}'; }
+declare -a FLEET_TILE=()                       # ordered tile labels (== tailnet hostnames), for the per-user grant prompt
 if [ -z "${FLEET_SSH:-}" ]; then
-  # 'dev'/'vps' are FIXED role labels (the access-grant keys + tile names) — NOT tailnet names.
-  # You choose which actual tailnet NODE each label points at. We resolve your choice against the
-  # live tailnet (`tailscale status` on this host) and store the node's TAILNET IP, because: (1) it
-  # makes a typo impossible — a non-peer is rejected here instead of failing silently at the tile;
-  # (2) the desktop container's tailscaled runs without --accept-dns, so MagicDNS NAMES may not
-  # resolve INSIDE the container — the resolved IP always does.
-  tnet_peers() { tailscale status 2>/dev/null | awk '$1 ~ /^100\./ {print $1"\t"$2}'; }
-  pick_peer() {  # <label> <prompt> <default> — echoes the host to use (resolved IP when possible)
-    local lbl="$1" prompt="$2" def="$3" v ip
-    while :; do
-      v="$(ask "$prompt" "$def")"
-      [ -z "$v" ] && { printf ''; return 0; }                              # blank = no tile
-      command -v tailscale >/dev/null 2>&1 || { printf '%s' "$v"; return 0; }  # no CLI: can't validate, accept as-is
-      case "$v" in 100.*) printf '%s' "$v"; return 0 ;; esac                # explicit tailnet IP: accept
-      ip="$(tnet_peers | awk -v n="$v" -F'\t' '$2==n {print $1; exit}')"
-      [ -n "$ip" ] && { echo "    ✓ $lbl → $v ($ip)" >&2; printf '%s' "$ip"; return 0; }
-      echo "    ✗ '$v' is not a live tailnet peer — pick a name from the list above, or enter its 100.x IP" >&2
-    done
-  }
-  echo "  Fleet SSH tiles — keyless Tailscale-SSH; needs the tailnet ACL 'accept' for THIS node." >&2
+  # List only SSH-REACHABLE peers (a live :22 probe — a host with no sshd, e.g. a phone, can't be a
+  # tile), numbered. Store the resolved tailnet IP (the container's tailscaled runs without
+  # --accept-dns, so MagicDNS names may not resolve in-container; the IP always does).
+  declare -a _pk_ip=() _pk_name=()
   if command -v tailscale >/dev/null 2>&1; then
-    echo "  Registered tailnet peers (choose the NODE for each role label):" >&2
-    tnet_peers | sed 's/^/      /' >&2
+    echo "  Scanning tailnet for SSH-reachable hosts (:22)…" >&2
+    while IFS=$'\t' read -r _ip _name; do
+      [ -n "$_ip" ] || continue
+      if timeout 2 bash -c ">/dev/tcp/${_ip}/22" 2>/dev/null; then
+        _pk_ip+=("$_ip"); _pk_name+=("$_name")
+        printf '    %2d) %-24s %s\n' "${#_pk_ip[@]}" "$_name" "$_ip" >&2
+      fi
+    done < <(tnet_peers)
+    [ "${#_pk_ip[@]}" -eq 0 ] && echo "    (no SSH-reachable peers found — no fleet tiles; export \$FLEET_SSH to set them by hand)" >&2
   else
-    echo "  (tailscale CLI not on this host — entries can't be validated; they must resolve inside the container)" >&2
+    echo "  (tailscale CLI not on this host — no fleet tiles; export \$FLEET_SSH to set them by hand)" >&2
   fi
-  dev_host="$(pick_peer dev '  dev box — tailnet hostname or 100.x IP (blank = no dev tile)' 'fedora-dev')"
-  vps_host="$(pick_peer vps '  vps/bootstrap box — tailnet hostname or 100.x IP (blank = no vps tile)' '')"
+  # Single number-only multi-select from the SSH-enabled list above: choose which hosts to ENABLE
+  # as fleet tiles (pick by NUMBER, never by IP). Each picked host -> a tile labeled by its tailnet
+  # hostname, stored with its resolved tailnet IP. These ARE the tiles offered to each user below.
   FLEET_SSH=""
-  [ -n "$dev_host" ] && FLEET_SSH="dev ${dev_host} 22 core"
-  [ -n "$vps_host" ] && FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}vps ${vps_host} 22 core"
+  if [ "${#_pk_ip[@]}" -gt 0 ]; then
+    while :; do
+      sel="$(ask '  Enable which hosts as fleet tiles? (numbers like 1,3 | all | none)' none)"
+      FLEET_SSH=""; FLEET_TILE=()
+      case "$sel" in
+        none|NONE|None) break ;;
+        all|ALL|All)
+          for _x in "${!_pk_ip[@]}"; do
+            FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}${_pk_name[$_x]} ${_pk_ip[$_x]} 22 core"; FLEET_TILE+=("${_pk_name[$_x]}")
+          done; break ;;
+        *) _ok=1
+          for _num in $(printf '%s' "$sel" | tr ',' ' '); do
+            if printf '%s' "$_num" | grep -Eq '^[0-9]+$' && [ "$_num" -ge 1 ] && [ "$_num" -le "${#_pk_ip[@]}" ]; then
+              _x=$((_num-1)); _nm="${_pk_name[$_x]}"
+              case " ${FLEET_TILE[*]:-} " in *" $_nm "*) ;; *) FLEET_SSH="${FLEET_SSH:+${FLEET_SSH};}${_nm} ${_pk_ip[$_x]} 22 core"; FLEET_TILE+=("$_nm") ;; esac
+            else echo "    ✗ '$_num' is not a host number (1-${#_pk_ip[@]})" >&2; _ok=0; break; fi
+          done
+          [ "$_ok" = 1 ] && [ "${#FLEET_TILE[@]}" -gt 0 ] && break ;;
+      esac
+    done
+    [ "${#FLEET_TILE[@]}" -gt 0 ] && { echo "  ✓ fleet tiles enabled:" >&2; for _t in "${FLEET_TILE[@]}"; do echo "      • $_t" >&2; done; }
+  fi
+fi
+# Tile labels for the per-user grant prompt — derive from FLEET_SSH so a pre-set $FLEET_SSH works too.
+if [ -n "${FLEET_SSH:-}" ] && [ "${#FLEET_TILE[@]}" -eq 0 ]; then
+  while IFS=' ' read -r _l _rest; do [ -n "$_l" ] && FLEET_TILE+=("$_l"); done < <(printf '%s\n' "$FLEET_SSH" | tr ';' '\n')
 fi
 TS_AUTHKEY="$(ask 'Tailscale auth key (blank = interactive join later)' '')"
 
@@ -150,11 +162,28 @@ while [ "$i" -lt "$N" ]; do
   done
   seen="$seen$u "
   p="$(choose_password "password for '$u'")"
-  a=""
-  while :; do
-    a="$(ask "  Show the Dev/VPS fleet SSH tiles for '$u'? (none|dev|host|both)" none)"
-    case "$a" in none|dev|host|both) break ;; *) echo "    pick: none | dev | host | both" >&2 ;; esac
-  done
+  # Fleet grant: 'none', 'all', or a SUBSET of the tiles by number (e.g. '1,3'). Stored as
+  # USER{i}_ACCESS = none | all | comma-list-of-hostnames; guac-db-provision exact-matches it.
+  if [ "${#FLEET_TILE[@]}" -eq 0 ]; then
+    a=none                                              # no fleet tiles exist -> nothing to grant
+  else
+    echo "    Fleet tiles available for '$u':" >&2
+    _k=0; for _t in "${FLEET_TILE[@]}"; do _k=$((_k+1)); printf '      %2d) %s\n' "$_k" "$_t" >&2; done
+    while :; do
+      sel="$(ask "    which tiles for '$u'? (numbers like 1,3 | all | none)" none)"
+      case "$sel" in
+        none|NONE|None) a=none; break ;;
+        all|ALL|All)    a=all;  break ;;
+        *) a=""; _ok=1
+           for _num in $(printf '%s' "$sel" | tr ',' ' '); do
+             if printf '%s' "$_num" | grep -Eq '^[0-9]+$' && [ "$_num" -ge 1 ] && [ "$_num" -le "${#FLEET_TILE[@]}" ]; then
+               a="${a:+$a,}${FLEET_TILE[$((_num-1))]}"
+             else echo "      ✗ '$_num' is not a tile number (1-${#FLEET_TILE[@]})" >&2; _ok=0; break; fi
+           done
+           [ "$_ok" = 1 ] && [ -n "$a" ] && break ;;
+      esac
+    done
+  fi
   export "USER${i}_NAME=$u" "USER${i}_PW=$p" "USER${i}_ACCESS=$a"
 done
 
