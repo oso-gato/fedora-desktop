@@ -106,19 +106,14 @@ SQL
     if [ "$_acc" != none ] && [ -n "${FLEET_SSH:-}" ]; then
         printf '%s\n' "$FLEET_SSH" | tr ';' '\n' | while IFS=' ' read -r f_label f_host f_port f_user _rest; do
             [ -n "$f_label" ] && [ -n "$f_host" ] || continue
-            # EXACT-label match (anchored, NOT substring): a grant fires ONLY for the canonical
-            # fleet labels. Substring matching (*dev*) silently OVER-GRANTED — a 'dev' grant
-            # leaked any label containing 'dev' (devops/devbox), a 'host' grant leaked ghost/vpsny
-            # — each landing a core/admin shell on an UNINTENDED fleet host. The sanctioned
-            # spin-up.sh wizard only ever emits 'dev'/'vps', so exact matching is loss-less there
-            # and fails CLOSED (deny) for any non-canonical hand-rolled FLEET_SSH label.
-            case "$_acc" in
-                all) : ;;                                              # core/admin: every tile
-                both) case "$f_label" in dev|vps|host) : ;; *) continue ;; esac ;;
-                dev)  case "$f_label" in dev)          : ;; *) continue ;; esac ;;
-                host) case "$f_label" in vps|host)     : ;; *) continue ;; esac ;;
-                *) continue ;;
-            esac
+            # _acc is 'all' (every tile — core/admin) OR a comma-list of fleet labels (each tile's
+            # label == its tailnet hostname, per spin-up's per-host picker). EXACT whole-token match
+            # (the ",$_acc," / ",$f_label," wrapping anchors it — no substring leak), fail-CLOSED: a
+            # label not in the list is skipped. 'none' is short-circuited above. (Legacy dev/host/both
+            # no longer map — the wizard emits hostname labels now — so they grant nothing, safe.)
+            if [ "$_acc" != all ]; then
+                case ",$_acc," in *",$f_label,"*) : ;; *) continue ;; esac
+            fi
             printf "INSERT IGNORE INTO guacamole_connection_permission (entity_id, connection_id, permission)\n  SELECT @eid, connection_id, 'READ' FROM guacamole_connection WHERE connection_name=%s AND parent_id=@grp;\n" "$(sqlstr "ssh-$f_label")"
         done || true   # pipe exit = while's last cmd (may be a non-matching `continue`)
     fi

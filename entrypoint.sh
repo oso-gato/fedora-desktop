@@ -105,10 +105,13 @@ for _i in 1 2 3 4 5; do
     echo "[users] invalid username '$_n' — need ^[a-z_][a-z0-9_-]{0,30}$ — skipping"
     eval "unset USER${_i}_NAME USER${_i}_PW"; continue
   fi
-  # Normalize this user's FLEET access grant (none|dev|host|both); invalid -> none.
-  # This selects which Dev/VPS bastion tiles the user's web login shows (the DB
-  # provisioning reads USER{i}_ACCESS below). Grant = bastion reach (lands as core on target).
-  eval "_a=\${USER${_i}_ACCESS:-none}"; case "$_a" in none|dev|host|both) ;; *) _a=none ;; esac
+  # Normalize this user's FLEET access grant: 'none' | 'all' | comma-list of fleet labels
+  # (tailnet hostnames, per spin-up's per-host picker). This selects which bastion tiles the
+  # user's web login shows (the DB provisioning reads USER{i}_ACCESS below; grant = bastion reach,
+  # lands as core on the target). Sanitize to [A-Za-z0-9._,-] (drop spaces / anything risky);
+  # empty -> none. guac-db-provision exact-matches each label, fail-closed.
+  eval "_a=\${USER${_i}_ACCESS:-none}"
+  _a="$(printf '%s' "$_a" | tr -cd 'A-Za-z0-9._,-')"; [ -n "$_a" ] || _a=none
   eval "USER${_i}_ACCESS=\$_a"
   if ! id -u "$_n" >/dev/null 2>&1; then
     # CREATE non-privileged: NO -aG wheel, NO subuid/subgid row (rootless podman stays core-only).
