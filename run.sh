@@ -115,6 +115,7 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
 
 podman run -d --name fedora-desktop \
     --hostname fedora-desktop \
+    --pull=newer \
     --restart=always \
     --shm-size=1g \
     --cap-add NET_ADMIN \
