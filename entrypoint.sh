@@ -203,6 +203,7 @@ if [ "${ENABLE_AUDIO:-false}" = "true" ]; then RDP_DISABLE_AUDIO=0; else RDP_DIS
 MARIADBD="$(command -v mariadbd || command -v mysqld || echo /usr/sbin/mariadbd)"
 MADMIN="$(command -v mariadb-admin || command -v mysqladmin)"
 MINSTALL="$(command -v mariadb-install-db || command -v mysql_install_db)"
+MUPGRADE="$(command -v mariadb-upgrade || command -v mysql_upgrade || echo '')"
 MCLIENT="$(command -v mariadb || command -v mysql)"
 DBSOCK=/var/lib/mysql/mysql.sock   # Fedora's default socket (datadir-local) — same on all lineages
 MYSQL_ROOT() { "$MCLIENT" --socket="$DBSOCK" "$@"; }   # OS-root -> DB-root via unix_socket auth
@@ -232,6 +233,12 @@ for _i in $(seq 1 60); do
 done
 [ "$_db_ready" = 1 ] || { echo "FATAL: MariaDB did not become ready" >&2; exit 1; }
 echo "[db] MariaDB up on 127.0.0.1:3306 (loopback only)"
+# Cross-version datadir upgrade: a monthly --no-cache base rebuild can land a NEWER MariaDB on an
+# EXISTING /var/lib/mysql volume, whose system tables then need upgrading. The systemd lineage runs
+# this via mariadb.service's ExecStartPost=mariadb-check-upgrade; the no-systemd watchdog has no
+# equivalent, so run it idempotently here (it self-skips when the datadir is already current, keyed
+# on mysql_upgrade_info). NON-FATAL — a failed/again-current upgrade must never block the desktop.
+[ -n "$MUPGRADE" ] && "$MUPGRADE" --socket="$DBSOCK" >/var/log/mariadb-upgrade.log 2>&1 || true
 
 # ---- provision Guacamole DB-auth + TOTP via the shared single-source helper -------
 # bin/guac-db-provision.sh (COPY'd to /usr/local/share/fedora-dev/bin/) is the ONE
