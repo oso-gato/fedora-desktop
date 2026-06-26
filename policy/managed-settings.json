@@ -1,4 +1,5 @@
 {
+  "effortLevel": "xhigh",
   "permissions": {
     "deny": [
       "Bash(dnf copr:*)",
@@ -28,7 +29,7 @@
       "mcp__*pull_request*merge*"
     ],
     "disableBypassPermissionsMode": "disable",
-    "disableAutoMode": "disable",
+    "defaultMode": "auto",
     "allowManagedPermissionRulesOnly": true,
     "allowManagedHooksOnly": true
   },
