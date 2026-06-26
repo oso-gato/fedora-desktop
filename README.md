@@ -309,6 +309,10 @@ flags: `--shm-size=1g`, `--cap-add NET_ADMIN SYS_ADMIN`, `--device /dev/net/tun 
 
 ### Quadlet (preferred — systemd-managed)
 
+**The Quadlet path is xrdp-only today.** `fedora-desktop.container` deploys the **xrdp** lineage;
+**grd deploys via `run.sh.grd` only** — there is no grd Quadlet until the grd runtime is
+deploy-validated end-to-end on a host.
+
 ```sh
 mkdir -p ~/.config/containers/systemd
 cp fedora-desktop.container ~/.config/containers/systemd/

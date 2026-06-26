@@ -6,15 +6,16 @@
 # lineage (Containerfile); they share the harness, the app set, the policy, and
 # the ratified Principle-2(c) — only the ACCESS layer + the INIT contract differ.
 #
-# 3-AXIS ACCESS, all converging on ONE GRD session:
+# 2 LIVE ACCESS AXES + 1 RESERVED v1 FOLLOW-UP, all converging on ONE GRD session:
 #   RDP  — GRD native (FreeRDP, :3389, TLS), tailnet-only
-#   VNC  — GRD native (grdctl vnc, libvncserver, :5900), tailnet-only
 #   web  — Apache Guacamole ONLY (the SOLE public :8443 browser door): guacd ->
 #            GRD's loopback RDP -> HTML5 (RDP-grade; the guacamole.war is the lone
 #            class-(c) artifact, GPG-verified). noVNC was REMOVED fleet-wide — the
 #            web door is a PUBLIC (non-tailnet) door and noVNC's 8-char VNC VncAuth
 #            is unacceptable there; Guacamole authenticates with a strong password
 #            + brute-force lockout (auth-ban). Identical to the xrdp lineage.
+#   VNC  — DOCUMENTED v1 FOLLOW-UP, not served in v1 (grdctl --headless vnc :5900,
+#            tailnet-only).
 #
 # HEADLESS (binding prerequisite — see CLAUDE.md): runs with NO monitor/GPU/seat;
 # the session is mutter --headless rendered by software GL (llvmpipe).
@@ -60,9 +61,10 @@ COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
 # EXPOSE is metadata only (run.sh.grd owns the publish set — there is no grd Quadlet yet).
-# ONLY 8443 (Guacamole web) is published/public; ssh (:22), mosh (UDP 61001-62000), GRD RDP
-# (:3389-3394) and GRD VNC (:5900) are ALL TAILNET-ONLY (run.sh.grd never -p's them, and the
-# in-container nft guard drops them on non-lo/non-tailscale0) — matching Principle 7.
+# ONLY 8443 (Guacamole web) is published/public; ssh (:22), mosh (UDP 61001-62000) and GRD RDP
+# (:3389-3394) are ALL TAILNET-ONLY (run.sh.grd never -p's them, and the in-container nft guard
+# drops them on non-lo/non-tailscale0) — matching Principle 7. 5900 reserved for the VNC
+# follow-up; not bound in v1 (forward-compat metadata only).
 EXPOSE 22 8443 3389 5900 61001-62000/udp
 
 # systemd is PID 1 — the GRD requirement. STOPSIGNAL per the systemd container
