@@ -77,6 +77,30 @@ depend on a real display, a GPU, or a physical seat is a **defect**, not a featu
 hard prerequisite of the remote-desktop-in-a-container design, never a tunable. (Verify per
 Principle 9 that the image comes up + serves every access path with no display/seat present.)
 
+## PRINCIPLE 0 — THE SELF-SUSTAINING APPARATUS (autonomy mandate + Definition of Done)
+
+The PRIMARY PURPOSE of the apparatus (`fedora-dev` + `fedora-bootstrap`, inside which this box develops)
+is to keep the human OUT of the loop until genuinely needed. Full text is the law —
+[policy/CLAUDE.md](policy/CLAUDE.md) "THE SELF-SUSTAINING APPARATUS"; the rules that bind a repo edit:
+
+- **Autonomy mandate.** Do MOST of the work + thinking. When there are options, BUILD 2–3, test them
+  through the loop, DISCARD what doesn't fit, and land the right solution YOURSELF — recommend AND
+  self-test your own recommendation; do not shop options to the human. TEAR DOWN and REBUILD to a
+  ZERO-BASE rather than defend a first draft. Presenting an options-decision is RARE.
+- **Engage the human for EXACTLY TWO reasons:** (1) MATERIALLY COMPLETE → needs the clickable APPROVE
+  to merge; (2) MATERIALLY BLOCKED → a genuine roadblock needing a DECISION (not a merge). Status-checks
+  and "which should I do" are NOT reasons.
+- **The PR is the agent's PROOF OF WORK** — develop → open PR → run the live-gate loop (label
+  `live-validate` → host builds a disposable candidate → GREEN/RED → iterate, RED: fix or SUPERSEDE,
+  GREEN: build upon) until DONE.
+- **DEFINITION OF DONE — a change is DONE only when ALL hold:** (1) the FULL objective is materially
+  achieved (not a rabbit-hole ~5% slice); (2) validated through the loop — in-box build/assembly GREEN
+  AND the host live-gate verdict GREEN (where the host cannot yet gate it, the strongest available
+  validation + an explicit host-validation handoff); (3) adheres to the BUILD PRINCIPLES below; (4) a
+  TLDR is written and CRITICALLY SELF-EXAMINED against the work (options considered+discarded, reasoning,
+  fit to BOTH the design + task objective, genuine gaps/forks) — dry-run AS IF the human; if it fails its
+  own scrutiny, return to the loop, do NOT present. Only then does it go to the human (reason #1).
+
 ## BUILD PRINCIPLES (binding for every code change)
 
 | # | Principle | Rule |

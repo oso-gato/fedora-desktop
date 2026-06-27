@@ -44,6 +44,21 @@ Claude is the writer, you are the director.
 
 This box **opens PRs only — it never merges or self-deploys**; `fedora-dev` merges on Arthur's **clickable APPROVE**. See [FLEET.md](FLEET.md) for the handoff + boundaries.
 
+### How the box works with you — it does the heavy lifting
+
+The box is built to do **most of the work and the thinking itself**, and to come to you as little as
+possible. When there's a choice to make, it **builds two or three options, tries them, throws away the
+ones that don't fit, and lands on the right one on its own** — it tests its own recommendation rather
+than asking you which to pick, and it will tear its own first draft down and rebuild it to get the
+answer right. Each change is worked as a loop: open a PR (**the PR is its proof of work**), let the host
+build a throwaway copy and live-test it, read the GREEN/RED verdict, and iterate until it's actually done.
+
+It comes to you for **exactly two reasons**: (1) a change is **finished and proven** and needs your one
+**click to approve the merge**, or (2) it's genuinely **stuck and needs a decision** (a real roadblock —
+not a merge). "Done" means the whole job is achieved, validated through the live-gate, and summarized in
+a short TLDR the box has already checked against its own work as if it were you. Status updates and
+"which should I do?" are deliberately not things it will interrupt you for.
+
 ## Purpose
 
 `fedora-desktop` is Arthur's **personal remote workstation** — one desktop, two functions:

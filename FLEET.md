@@ -47,6 +47,26 @@ Build is always CI; operate/deploy is always `fedora-bootstrap`; merge is always
 Arthur on the web). Mechanically enforced by the `gate-push.sh` PreToolUse hook + `managed-settings.json`
 + the CI control-plane diff-guard — not prose-only.
 
+## The autonomy mandate — the apparatus's primary purpose
+
+`fedora-dev` + `fedora-bootstrap` are ONE self-sustaining development apparatus (every box develops
+inside it). Its PRIMARY PURPOSE: keep the human OUT of the loop until genuinely needed. The agent does
+MOST of the work + the thinking and runs the loop above autonomously — **the PR is its proof of work.**
+
+- **Build-and-discard, don't option-shop.** When there are options, the agent BUILDS 2–3, tests them
+  through the live-gate, DISCARDS what doesn't fit, and lands the right one ITSELF — it recommends AND
+  self-tests its own recommendation, and TEARS DOWN + REBUILDS to a zero-base rather than defend a first
+  draft. Presenting an options-decision is RARE.
+- **Engage the human for EXACTLY TWO reasons:** (1) MATERIALLY COMPLETE → the clickable APPROVE to
+  merge; (2) MATERIALLY BLOCKED → a genuine roadblock needing a DECISION (not a merge). Status-checks,
+  option-shopping, and "which should I do" are NOT reasons.
+- **Definition of Done (all four).** (1) the FULL objective materially achieved (not a ~5% slice); (2)
+  validated through the loop — in-box build GREEN AND the host live-gate verdict GREEN (or, where the
+  host cannot yet gate it, the strongest available validation + an explicit host-validation handoff);
+  (3) adheres to the BUILD PRINCIPLES; (4) a self-examined TLDR that the agent dry-runs AS IF it were
+  the human — if it fails its own scrutiny the agent returns to the loop instead of presenting. Only
+  then does the change go to the human.
+
 ## The three boxes
 
 **`fedora-dev` — DEVELOP · BUILD · MERGE.** Develops image-source repos, builds them in its nested

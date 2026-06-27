@@ -18,6 +18,55 @@ backstops below are BUILT controls, not aspirations).
 
 **Control-plane class** = `policy/**`, `managed-settings.json`, `policy/hooks/gate-push.sh`, `.github/workflows/**`, `*.container`, `run.sh*` security flags + publish set, the box-rebuild/assemble machinery, key-sync, `*sudoers*` — standalone, never bundled.
 
+## THE SELF-SUSTAINING APPARATUS — AUTONOMY MANDATE & DEFINITION OF DONE
+
+**The bedrock primary purpose.** `fedora-dev` (develop·build·merge) + `fedora-bootstrap` (operate the
+host live-gate) exist as ONE self-sustaining development apparatus — and this box (`fedora-desktop`)
+develops inside it. The apparatus's PRIMARY PURPOSE is to keep the human OUT of the loop until genuinely
+needed: the agent does MOST of the work and the thinking, runs the loop autonomously, and engages Arthur
+only at the genuine decision points below.
+
+**THE LOOP (every change).** develop → open a PR (**the PR is the agent's PROOF OF WORK**) → label
+`live-validate` → the host builds a DISPOSABLE throwaway candidate and live-gates it (Gate B) →
+GREEN/RED verdict → iterate (RED: fix, or SUPERSEDE the branch if the approach was wrong; GREEN: build
+upon) → repeat UNTIL DONE. The agent runs this loop autonomously; only at the end does it engage the
+human. (This box is PR-only — it never merges; the loop's final merge is `fedora-dev`'s, on Arthur's
+discrete clickable APPROVE.)
+
+**AUTONOMY MANDATE (how the agent works — BINDING).**
+- The agent does MOST of the work and the thinking.
+- When there are options, the agent BUILDS 2–3 of them to test, iterates, DISCARDS the ones that don't
+  work or aren't quite right, and lands on the correct solution ITSELF — it does not shop options to the
+  human.
+- The agent makes the recommendation AND tests its own recommendation (throwaway build + live-gate),
+  rather than asking which to pick.
+- The agent TEARS DOWN and REBUILDS its own work, thinking harder to reach a ZERO-BASE, rather than
+  defending a first draft.
+- Presenting an options-decision to the human is RARE — reserved for a genuine human decision point; be
+  firm about that rarity.
+
+**ENGAGE THE HUMAN FOR EXACTLY TWO REASONS (no others).**
+1. **MATERIALLY COMPLETE** — the objective is met; requires the clickable APPROVE to merge.
+2. **MATERIALLY BLOCKED** — the agent genuinely cannot proceed and needs a DECISION (NOT a merge; a true
+   roadblock).
+Status-confirmation, option-shopping, and "which should I do" are NOT reasons to engage the human.
+
+**DEFINITION OF DONE (a change is DONE only when ALL hold).**
+1. The FULL objective is materially achieved (measured against the whole objective — not a rabbit-hole
+   sub-task / ~5% slice).
+2. Validated through the loop: in-box build + assembly GREEN AND the host live-gate verdict GREEN (the
+   live B-gates) — PROVEN, not merely built. (Where the host cannot yet gate it, the strongest available
+   validation + an explicit host-validation handoff.)
+3. Adheres to the BUILD PRINCIPLES (sources/provenance, minimalism, secrets/identity, deploy contract,
+   validate).
+4. A TLDR is written and the agent has CRITICALLY SELF-EXAMINED it against its own work — options
+   considered+discarded, reasoning, fit to BOTH the design objective AND the specific task objective, and
+   genuine gaps/forks/concessions. The agent dry-runs the TLDR AS IF it were the human, measured against
+   the total objective. If the TLDR FAILS its own scrutiny, the agent does NOT present — it returns to
+   the loop and continues until the TLDR passes.
+Only when 1–4 hold does the change go to the human (reason #1: approve-to-merge). The TLDR is the final
+step before the human.
+
 ## ROLE
 
 Arthur's personal remote workstation — the maintainer's box, two functions on one desktop:
