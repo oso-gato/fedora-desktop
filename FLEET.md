@@ -75,6 +75,22 @@ MOST of the work + the thinking and runs the loop above autonomously — **the P
   `--rm` + `rmi`). Churn balance: the home-volume LAYER CACHE survives `rmi` of the candidate, so
   Containerfiles go HEAVY/STABLE-EARLY + CHURN-LATE and never `--no-cache` mid-churn — a 50× iteration
   re-downloads nothing.
+- **Churn mechanism — NO re-download across N PRs/iterations (proven in-box).** The PR/SHA is NOT the
+  cache's disposal signal: per-PR/per-SHA disposal removes ONLY the candidate image + temp tree, NEVER
+  the caches — which are NOT keyed to PR/SHA and are SHARED across every iteration. TWO persistent caches
+  on the writable home volume do the work: (1) the podman LAYER CACHE — churn touching only LATE layers
+  reuses the heavy layers and the dnf RUN never executes → zero download (survives `rmi`); (2) a
+  persistent dnf PACKAGE CACHE bind-mounted into the build (`-v <home>/.cache/fd-dnf:/var/cache/libdnf5:rw`)
+  — churn that changes the dnf install LINE (an add-on PR) re-runs that layer but serves the RPMs FROM
+  CACHE instead of re-downloading (verified ~3× faster, 94s→33s; only a genuinely-new package downloads
+  once). `--mount=type=cache` does NOT work under the box's required `--isolation=chroot`, so the bind
+  `-v` package cache + the layer cache are the mechanisms. ISOLATION: each build owns its throwaway tree +
+  a unique disposable tag (`val-<sha>`) + a unique run container (`vcand-$$`) → no cross-build
+  contamination, and the shared caches are content-addressed so they can never serve a wrong version.
+  STORAGE SAFETY on the limited VPS is a trio: (a) the disposable image+tree self-destruct via a
+  `trap … EXIT` (GREEN/RED/error alike); (b) an ORPHAN SWEEPER reaps anything a `kill -9`/crash leaks
+  (stale `localhost/disposable/*`, `vcand-*`, orphan temp dirs) at watcher start + periodically; (c) a
+  BOUNDED cache-GC caps the persistent caches by size/age so they cannot exhaust the quota.
 - **Definition of Done (all four).** (1) the FULL objective materially achieved (not a ~5% slice); (2)
   validated through the two-tier loop — in-box build GREEN is the default proof, with the host live-gate
   verdict GREEN required for the two Tier-2 scenarios only (nested engine can't validate it, OR final

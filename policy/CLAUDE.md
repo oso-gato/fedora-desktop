@@ -95,8 +95,33 @@ step before the human.
   late layers so the heavy layers are REUSED → zero re-download. **NEVER `--no-cache` / prune during
   churn** — that is reserved for the monthly clean `--no-cache` rebuild. The throwaway is the OUTPUT; the
   cache is the PERSISTENT INPUT — decoupled from BOTH the immutable live tree AND the disposable
-  candidate. (Note: buildah `--mount=type=cache` does NOT persist under the dev box's required
-  `--isolation=chroot`, verified — the layer cache is the mechanism.)
+  candidate.
+- **CHURN MECHANISM — NO re-download across N PRs/iterations (proven in-box). The PR/SHA is NOT the
+  cache's disposal signal.** Per-PR / per-SHA disposal removes ONLY the disposable image
+  (`localhost/disposable/<name>:val-<sha>`) + its temp throwaway tree — it NEVER removes the caches. The
+  caches are NOT keyed to PR/SHA; they are SHARED across ALL iterations. **TWO persistent caches on the
+  writable home volume serve churn:**
+  - **(1) the podman LAYER CACHE** — for churn touching only LATE layers (COPY'd scripts/config): the
+    heavy layers are reused and the dnf `RUN` does NOT execute at all → **ZERO download** (verified;
+    survives `rmi` of the candidate).
+  - **(2) a persistent dnf PACKAGE CACHE**, bind-mounted into the build
+    (`-v <home>/.cache/fd-dnf:/var/cache/libdnf5:rw`) — for churn that changes the dnf install LINE (an
+    add-on PR): the layer DOES re-run, but the RPMs are **SERVED FROM CACHE, not re-downloaded**
+    (verified ~3× faster, 94s → 33s; only a genuinely-NEW package downloads once, then it too is cached).
+
+  (buildah `--mount=type=cache` does NOT work under the dev box's required `--isolation=chroot`, verified
+  — so the bind `-v` package cache + the layer cache ARE the two mechanisms.)
+- **ISOLATION — no cross-build contamination.** Each build gets its OWN throwaway tree + a UNIQUE
+  disposable tag (`val-<sha>`) + a UNIQUE run container (`vcand-$$`), so concurrent or sequential builds
+  cannot collide. The two shared caches are CONTENT-ADDRESSED (layer digests; dnf RPM NEVRA + checksum),
+  so a shared cache can NEVER serve a wrong version — sharing the cache is safe precisely because the
+  candidates are isolated and the cache is content-keyed.
+- **STORAGE SAFETY (limited VPS quota) — the trio.** **(a)** the disposable image + temp tree
+  SELF-DESTRUCT via `trap … EXIT` (fires on GREEN, RED, and error alike); **(b)** an ORPHAN SWEEPER reaps
+  anything a `kill -9` / crash leaks — stale `localhost/disposable/*` images, `vcand-*` run containers,
+  and orphan temp dirs — at watcher start AND periodically; **(c)** a BOUNDED cache-GC caps the two
+  persistent caches by size / age so they can NEVER exhaust the quota. The caches persist across all
+  iterations; only the candidate is disposable, and nothing is allowed to leak unboundedly.
 
 ## ROLE
 
