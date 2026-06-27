@@ -304,12 +304,14 @@ EOF
 #                    head (native VNC :5900, tailnet-only). The browser door is
 #                    Apache Guacamole only (guacd/libguac/tomcat + the .war).
 #                    rclone (Fedora class-a) = the cloud-sync engine.
-#   XFCE desktop:    xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar
+#   XFCE desktop:    xfce4-session xfwm4 xfce4-panel xfdesktop ptyxis Thunar
 #   X/Electron deps: dbus-x11 xorg-x11-xauth xdpyinfo xterm mesa-dri-drivers
 #                    mesa-libgbm fonts adwaita-icon-theme nss atk at-spi2-atk
 #                    cups-libs gtk3 alsa-lib libnotify libsecret xdg-utils
 #                    gnome-keyring openssl (keytool/TLS keystore mint)
 #   Apps (Fedora):   firefox
+#   Terminal:        ptyxis (default terminal — see DE_PKGS); fastfetch (the
+#                    system-info greeting shown once per interactive terminal start)
 #   Apps (vendor):   code (MS repo) 1password 1password-cli (1Password repo)
 # NOTE: claude-code is DELIBERATELY NOT here (lives in claudebox). onedrive is
 # DELIBERATELY NOT here (rclone-only cloud, per policy/CLAUDE.md NON-VAULT CLOUD).
@@ -318,9 +320,19 @@ EOF
 # Swap ONLY the DE leaf set + the X session-start; the xrdp/Guacamole/app stack
 # below is shared across all xrdp variants. Minimal LEAF packages, NO @group
 # (PRINCIPLE 3). Names verified against the Fedora 44 live repos (2026-06-20).
+# DEFAULT TERMINAL = ptyxis (replaces xfce4-terminal — ptyxis supersedes it, so
+# keeping both is redundant per Principle 3). ptyxis is GNOME's modern container-
+# aware terminal (the Fedora Workstation default since F41) and is the DEFAULT
+# terminal on BOTH lineages — "where the operator runs `claude`". CAPABILITY
+# TRADE-OFF, DISCLOSED (Principle 3 "minimum relative to the chosen capability"):
+# ptyxis is GTK4/libadwaita, so on this otherwise-GTK3 XFCE stack it pulls in a
+# net-new gtk4 + libadwaita + vte291-gtk4 runtime closure (the GTK3 stack stays
+# for Firefox/Electron). This is an Arthur-directed capability choice (one modern
+# default terminal across both lineages), NOT a minimalism regression. It is made
+# the XFCE default below via an exo TerminalEmulator helper.
 : "${DESKTOP_ENV:=xfce}"
 case "$DESKTOP_ENV" in
-  xfce) DE_PKGS="xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar xfce4-settings"; XSESSION="startxfce4" ;;
+  xfce) DE_PKGS="xfce4-session xfwm4 xfce4-panel xfdesktop ptyxis Thunar xfce4-settings"; XSESSION="startxfce4" ;;
   *) echo "FATAL: unknown DESKTOP_ENV='$DESKTOP_ENV' (want: xfce — the sole xrdp DE; LXQt/KDE/MATE were dropped)" >&2; exit 1 ;;
 esac
 echo ">>> fedora-desktop variant: DESKTOP_ENV=$DESKTOP_ENV | DE='$DE_PKGS' | session='$XSESSION'"
@@ -363,7 +375,7 @@ $DNF install \
     ${WEB_PKGS} \
     ${DB_PKGS} \
     ${DE_PKGS} \
-    rclone \
+    rclone fastfetch \
     dbus-x11 xorg-x11-xauth xdpyinfo xterm \
     mesa-dri-drivers mesa-libgbm \
     dejavu-sans-fonts google-noto-sans-fonts adwaita-icon-theme \
@@ -655,6 +667,61 @@ cat > "$XFCONF/xfce4-desktop.xml" <<'XML'
   </property>
 </channel>
 XML
+
+# ---- ptyxis as the XFCE DEFAULT terminal (exo "preferred application") -------
+# XFCE resolves "open a terminal" — the panel launcher, Thunar / xfdesktop "Open
+# Terminal Here", and `exo-open --launch TerminalEmulator` — through an exo HELPER:
+# the TerminalEmulator id in helpers.rc names a .desktop under $XDG_DATA_DIRS/
+# xfce4/helpers/. Fedora's exo ships /etc/xdg/xfce4/helpers.rc with
+# TerminalEmulator=xfce4-terminal; we dropped xfce4-terminal (ptyxis supersedes
+# it), so register a ptyxis helper and repoint the SYSTEM default at it. (exo is a
+# hard-dep of the XFCE stack — xfce4-settings/Thunar — so /usr/bin/exo-open and the
+# helper framework are always present.) %B expands to the first found
+# X-XFCE-Binaries entry (/usr/bin/ptyxis); ptyxis runs a command via `-x`
+# (verified vs the ptyxis(1) man page / CLI), matching xfce4-terminal's `%B -x %s`.
+install -d -m 0755 /usr/share/xfce4/helpers
+cat > /usr/share/xfce4/helpers/ptyxis.desktop <<'DESK'
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Type=X-XFCE-Helper
+NoDisplay=true
+Name=Ptyxis
+Icon=org.gnome.Ptyxis
+X-XFCE-Binaries=ptyxis;
+X-XFCE-Category=TerminalEmulator
+X-XFCE-Commands=%B;
+X-XFCE-CommandsWithParameter=%B -x %s;
+StartupNotify=true
+DESK
+# Point the SYSTEM helpers.rc TerminalEmulator at ptyxis. A fresh /home volume has
+# no per-user ~/.config/xfce4/helpers.rc, so this baked default applies to core AND
+# every USER1..5; rewrite the line in place (preserving the other helper defaults),
+# or create the file if exo's copy is somehow absent. Re-stamped each monthly build.
+install -d -m 0755 /etc/xdg/xfce4
+if [ -f /etc/xdg/xfce4/helpers.rc ] && grep -q '^TerminalEmulator=' /etc/xdg/xfce4/helpers.rc; then
+    sed -i 's/^TerminalEmulator=.*/TerminalEmulator=ptyxis/' /etc/xdg/xfce4/helpers.rc
+else
+    printf 'TerminalEmulator=ptyxis\n' >> /etc/xdg/xfce4/helpers.rc
+fi
+
+# ---- fastfetch greeting on terminal start (system-wide; core + USER1..5) ------
+# Show a fastfetch system-info banner EXACTLY ONCE per login, in the tmux pane the
+# operator actually sees. Every interactive login is `exec`'d into tmux by
+# zz-tmux-attach.sh (PART A): the OUTER pre-attach login shell sources this file
+# via /etc/profile, and the shell tmux then spawns INSIDE the pane re-sources it
+# via /etc/bashrc (Fedora's /etc/bashrc loops /etc/profile.d/*.sh for non-login
+# interactive shells too — verified). Gating on $TMUX therefore fires fastfetch
+# ONLY in the in-tmux shell (visible pane) and NEVER in the outer shell that
+# `exec tmux` immediately replaces — exactly once, after the tmux UI is up.
+# System-wide /etc/profile.d needs NO per-user provisioning (covers USER1..5).
+cat > /etc/profile.d/zz-fastfetch.sh <<'EOF'
+# fastfetch greeting — once per login, inside the visible tmux pane only.
+case $- in *i*) ;; *) return 0 ;; esac
+[ -t 1 ] || return 0
+[ -n "${TMUX:-}" ] || return 0
+command -v fastfetch >/dev/null 2>&1 && fastfetch
+EOF
 
 dbus-uuidgen --ensure
 dnf clean all

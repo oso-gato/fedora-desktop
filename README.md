@@ -136,7 +136,8 @@ cloud is rclone-only.
 | xfwm4 | desktop | a | XFCE window manager |
 | xfce4-panel | desktop | a | XFCE panel (taskbar / launchers) |
 | xfdesktop | desktop | a | XFCE desktop background + icons |
-| xfce4-terminal | desktop | a | terminal emulator inside the desktop — where the operator runs `claude` |
+| ptyxis | desktop | a | the default terminal inside the desktop — where the operator runs `claude` — on **both lineages** (replaces `xfce4-terminal` here / `gnome-terminal` on grd). GNOME's modern container-aware terminal (Fedora Workstation default since F41). On the XFCE/GTK3 lineage it is GTK4/libadwaita, so it adds a net-new `gtk4`+`libadwaita`+`vte291-gtk4` runtime — a disclosed, deliberate capability choice (one modern default terminal across both lineages), not bloat |
+| fastfetch | desktop | a | the system-info greeting printed on every interactive terminal start, for all users — a system-wide `/etc/profile.d` drop-in shown once inside the tmux pane. **Both lineages** |
 | Thunar | desktop | a | XFCE file manager (browsing the vault / cloud-mount folders) |
 | dbus-x11 | desktop | a | `dbus-launch` / session bus for the X session (Electron apps + gnome-keyring need it) |
 | xorg-x11-xauth | desktop | a | X authority cookie management for the xrdp-spawned X session |
