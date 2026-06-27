@@ -63,21 +63,27 @@ package comes from, and deleted afterwards — but the box keeps its download ca
 times doesn't re-download anything fifty times.
 
 How that "no re-download" actually holds up across many PRs is worth spelling out, because it's been
-measured in the box, not just hoped for. Throwing away a test build deletes **only** that one disposable
-copy and its scratch folder — it never touches the caches. The caches aren't tied to any particular PR
-or revision; they're **shared by every iteration**, and there are two of them, both living on the box's
-own writable disk. The first is the **layer cache**: when a change only touches late steps (a script, a
-config tweak), all the heavy earlier steps are reused untouched and the package-install step doesn't even
-run, so nothing is downloaded at all. The second is a **package cache**: when a change actually edits the
-list of installed packages (say a PR that adds a new tool), that step does re-run, but the packages are
-**served from the local cache instead of re-downloaded** — measured about three times faster (94 seconds
-down to 33), with only a genuinely new package fetched once and then cached too. Every test build also
-gets its **own** scratch folder, its **own** uniquely-named throwaway image, and its **own** uniquely-named
-run, so two builds can never step on each other, and because the caches are keyed by exact content they
-can never hand back the wrong version. And because the server has limited disk, three safeguards keep it
-tidy: each disposable copy **deletes itself** when its build finishes — pass, fail, or crash; a **sweeper**
-clears out anything a hard crash might have left behind; and a **size/age cap** keeps the caches from ever
-growing large enough to fill the disk.
+measured in the box, not just hoped for. The one thing the box keeps between attempts is a **package
+cache** — the actual downloaded RPMs, sitting in plain storage on the box's own writable disk, **not
+inside any image** — so it survives every disposable copy (and its build layers) being thrown away. It
+isn't tied to any particular PR or revision; it's **shared by every iteration**. Even when a change edits
+the list of installed packages (say a PR that adds a new tool), that step re-runs but the packages are
+**served from the local cache instead of re-downloaded** — measured: a forced re-run fetched **nothing at
+all (0 bytes, versus 9.4 MiB the cold first time) and ran about 3.7× faster**, with only a genuinely new
+package fetched once and then cached too. The box deliberately does **not** keep each copy's half-finished
+build layers around, and that's a feature, not a gap: throwing a copy away takes its layers with it, so (a)
+the disk **never quietly fills up** with stale build layers (nothing extra to clean up), and (b) every
+fresh attempt is **rebuilt from the package cache against the current versions** — so a frozen old layer
+can't go stale on you — all for the cost of a few seconds of local work (about 3.6 s when warm), never
+another download. (When a copy is still around — back-to-back tweaks, or one kept on purpose — its finished
+layers are reused too and even that work is skipped; it's just never depended on once the copy is gone.)
+Every test build also gets its **own** scratch folder, its **own** uniquely-named throwaway image, and its
+**own** uniquely-named run, so two builds can never step on each other, and because the cache is keyed by
+exact content it can never hand back the wrong version. And because the server has limited disk, three
+safeguards keep it tidy: each disposable copy **deletes itself** when its build finishes — pass, fail, or
+crash; a **sweeper** clears out anything a hard crash might have left behind; and a **cap** keeps the
+package cache from ever filling the disk — dropping anything older than **45 days** first, then trimming
+oldest-first to stay under **15 GB** (both adjustable).
 
 It comes to you for **exactly two reasons**: (1) a change is **finished and proven** and needs your one
 **click to approve the merge**, or (2) it's genuinely **stuck and needs a decision** (a real roadblock —
