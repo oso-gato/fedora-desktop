@@ -370,13 +370,22 @@ Under **THE FLEET**, this box **opens PRs and never merges, pushes, or tags any 
    APPROVE (control-plane included), or you merge on GitHub.
 2. **Every other repo is off-limits** — not even a PR; that work belongs to the box that owns it.
 
-This is enforced mechanically, not by good behavior:
-- a managed `PreToolUse` hook (`policy/hooks/gate-push.sh`) **denies** `git push` / `gh pr
-  merge` / `gh pr create --merge|--auto` / `gh api …/merges|/merge` / wrapper-script variants
-  unless a one-shot approval marker is present;
-- `managed-settings.json` sets `disableBypassPermissionsMode`, `disableAutoMode`,
+Fleet-wide, the promotion gate is REFSPEC-AWARE and fail-closed: routine feature-branch pushes (an
+explicit non-`main`, non-`HEAD`, non-tag destination refspec) run AUTONOMOUSLY with no prompt; only a
+push that could touch `main` (a bare `git push`, a `main`/`HEAD`/`refs/tags/*` destination,
+`--all`/`--mirror`/`--tags`, or any unparseable / quoted / chained target) PLUS the merge verbs
+(`gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`, `gh api …/merge|/merges`) route to an
+in-session clickable `ask` only Arthur can answer. There is NO approval-marker mechanism (the shipped
+hook uses native `ask`); server-side branch protection on `main` is the PRIMARY backstop.
+
+This box is the **stricter PR-only case** of that gate, enforced mechanically, not by good behavior:
+- a managed `PreToolUse` hook (`policy/hooks/gate-push.sh`) **fail-closed denies** `git push` / `gh pr
+  merge` / `gh pr create --merge|--squash|--rebase|--auto` / `gh api …/merges|/merge` / wrapper-script
+  variants from this box — there is **no approval marker**; the automatic vault git-sync
+  `git -C <vault> push` is the sole exemption;
+- `managed-settings.json` sets `disableBypassPermissionsMode`, `defaultMode: auto`,
   `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, an MCP deny on any merge tool,
-  and a narrow allow for the vault git-sync push only;
+  blanket `git push` / `gh pr merge` deny rules, and a narrow allow for the vault git-sync push only;
 - the **CI control-plane diff-guard** fails any PR touching a guardrail file unless a reviewer
   applies the `control-plane-approved` label (standalone, never bundled).
 
@@ -391,6 +400,8 @@ This is enforced mechanically, not by good behavior:
 4 ship           merged → CI builds + cosign-signs → GHCR → the HOST's pull-based refresh
                  (busy-probe deferral + digest-rollback on health failure) recreates the box
 ```
+
+**Both lineages are live-gated pre-merge.** The top-level [`.live-gate`](.live-gate) file declares a build target per lineage (xrdp = `Containerfile`, grd = `Containerfile.grd`) — each carrying its run-contract fence (run.sh / run.sh.grd flags MINUS the public `-p` MINUS real secrets), the `/guacamole/` 200 + RDP `:3389` access probe, and the `--health-cmd` — which the host's model-C live-gate (`validate-candidate.sh`) sources to build, run, and probe the candidate disposably before Arthur's merge click.
 
 ### Vault & wiki, cloud sync
 
