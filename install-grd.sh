@@ -239,14 +239,42 @@ if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null && { [ -n "${SSH_TTY:-}" ] |
 fi
 EOF
 
-# tmux server config: per-client geometry isolation + clean repaint (see the
-# xrdp install.sh for the rationale of each line).
+# tmux server config: multi-device geometry policy + clean co-view (see the xrdp
+# install.sh for the full rationale). window-size=latest -> the session follows
+# the device that most recently sent INPUT (seamless macOS<->iPad handoff over
+# mosh; idle larger device blank-letterboxes via fill-character ' ', smaller one
+# crops; on active-device disconnect it falls back to whoever remains). prefix+g
+# cycles latest -> smallest -> largest. A tmux window has ONE size shared by all
+# co-viewing clients, so differently-sized devices on the SAME tab cannot each be
+# full-size (a tmux invariant, not a bug).
 cat > /etc/tmux.conf <<'EOF'
 set -g default-terminal "tmux-256color"
-set -g window-size smallest
+set -g window-size latest
 setw -g aggressive-resize on
+setw -g fill-character ' '
 set-hook -g client-attached 'refresh-client'
 set-hook -g client-resized  'refresh-client'
+set -g @coview latest
+
+# prefix+g: cycle the multi-device geometry policy (see comment above install).
+bind-key g {
+  if-shell -F '#{==:#{@coview},latest}' {
+    set -g window-size smallest
+    set -g @coview smallest
+    display-message 'co-view: SMALLEST - every device sees the whole session; big screens blank-letterbox'
+  } {
+    if-shell -F '#{==:#{@coview},smallest}' {
+      set -g window-size largest
+      set -g @coview largest
+      display-message 'co-view: LARGEST - biggest connected screen wins; smaller devices show a cropped view'
+    } {
+      set -g window-size latest
+      set -g @coview latest
+      display-message 'co-view: LATEST - the device you last typed on wins; whole session rescales to it'
+    }
+  }
+  refresh-client -S
+}
 EOF
 
 # ============================================================================

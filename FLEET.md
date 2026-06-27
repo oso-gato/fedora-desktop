@@ -24,11 +24,28 @@ Everyone develops on branches and **opens PRs**. **Only `fedora-dev` merges to `
 including its own and any control-plane change — and **only** on Arthur's **discrete clickable
 APPROVE** (a free-text "yes" is not approval).
 
-**Handoff:** propose → open PR → `fedora-dev` lists + presents the PRs → you APPROVE → `fedora-dev`
-merges → CI builds + cosign-signs → GHCR → `fedora-bootstrap` pulls + redeploys. Build is always CI;
-operate/deploy is always `fedora-bootstrap`; merge is always `fedora-dev` (or Arthur on the web).
-Mechanically enforced by the `gate-push.sh` PreToolUse hook + `managed-settings.json` + the CI
-control-plane diff-guard — not prose-only.
+**The merge gate.** The promotion gate is REFSPEC-AWARE and fail-closed: routine feature-branch pushes
+(an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run AUTONOMOUSLY with no prompt; only
+a push that could touch `main` (a bare `git push`, a `main`/`HEAD`/`refs/tags/*` destination,
+`--all`/`--mirror`/`--tags`, or any unparseable / quoted / chained target) PLUS the merge verbs
+(`gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`, `gh api …/merge|/merges`) route to an
+in-session clickable `ask` only Arthur can answer. There is NO approval-marker mechanism (the shipped
+hook uses native `ask`); server-side branch protection on `main` is the PRIMARY backstop.
+
+**The dev↔host loop.** The dev↔host loop runs autonomously EXCEPT the final merge: develop → open PR
+(feature pushes are autonomous) → label it `live-validate` → the host live-gate (Gate B) DISCOVERS it
+ORG-WIDE by that label (no repo list to maintain), fetches the PR head on-demand, applies a STRUCTURAL
+GUARD (only builds a candidate carrying a `Containerfile`/`.live-gate`, else skips cleanly), builds it
+DISPOSABLY per the repo's own in-repo `.live-gate` contract (PARSED, never executed) under loopback-only
+fences, and posts a GREEN/RED verdict comment → iterate (RED: push a fix, or SUPERSEDE the branch if the
+approach was wrong; GREEN: BUILD UPON it) until green → Arthur's discrete clickable APPROVE → fedora-dev
+merges. The human is OUT of the per-iteration loop — only the merge is a click. Repos are discovered
+DYNAMICALLY: create/rename/merge/delete freely; enroll one just by labelling its PR `live-validate` and
+shipping a `.live-gate`.
+
+Build is always CI; operate/deploy is always `fedora-bootstrap`; merge is always `fedora-dev` (or
+Arthur on the web). Mechanically enforced by the `gate-push.sh` PreToolUse hook + `managed-settings.json`
++ the CI control-plane diff-guard — not prose-only.
 
 ## The three boxes
 
@@ -61,3 +78,9 @@ throwaway no-secret sandbox; never operates a host.
 - **Sources** (dnf → vendor `.repo` → AppImage/`.war`, GPG/sha-verified) · **no secrets in image
   layers** · **headless everywhere** (software-GL); sensitive ports tailnet-only, the desktop's web
   gate the one public door.
+- **Multi-device terminal:** one shared `main` tmux group; a tmux window has ONE size shared by all
+  co-viewing clients, so `/etc/tmux.conf` is `window-size latest` (the device that last sent input
+  wins → whole session rescales) + `fill-character ' '` (idle larger device blank-letterboxes, never
+  `·`-garbles) + `prefix+g` to cycle latest/smallest/largest. Differently-sized devices on the SAME
+  tab can NEVER both be full-size (one program = one pty = one cell grid) — a tmux invariant, not a
+  bug to "fix"; the active device wins and the rest degrade cleanly (crop/blank-letterbox).
