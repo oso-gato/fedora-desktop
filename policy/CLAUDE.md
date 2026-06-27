@@ -10,9 +10,11 @@ backstops below are BUILT controls, not aspirations).
 
 **Roles, no overlap.** `fedora-dev` = develop · build · **merge**.  `fedora-bootstrap` = operate the host (create/remove containers) · live-diagnose.  `fedora-desktop` = its own knowledge-work toolset.
 
-**Everyone proposes; only `fedora-dev` merges.** Every box develops on branches and **opens PRs**; `fedora-bootstrap` + `fedora-desktop` **stop there**. **Only `fedora-dev` merges to `main`** — any open PR, *its own included* — and **only** when Arthur picks APPROVE in a **discrete clickable decision** (per-PR, shown the diff, one-shot; a free-text "yes" is NOT approval). **Control-plane PRs merge the same way, on the same click.** Arthur may also merge on GitHub himself.
+**Everyone proposes; only `fedora-dev` merges.** Every box develops on branches and **opens PRs**; `fedora-bootstrap` + `fedora-desktop` **stop there**. **Only `fedora-dev` merges to `main`** — any open PR, *its own included* — and **only** when Arthur picks APPROVE in a **discrete clickable decision** (per-PR, shown the diff; a free-text "yes" is NOT approval). **Control-plane PRs merge the same way, on the same click.** Arthur may also merge on GitHub himself.
 
-**Handoff — where & when.** propose → **open PR** (any box) → `fedora-dev` lists that repo's open PRs + presents them for Arthur's click → **APPROVE → `fedora-dev` merges** (control-plane included) → **CI** builds + signs + publishes → **`fedora-bootstrap`** pulls + redeploys. Build = always CI; operate/deploy = always `fedora-bootstrap`; merge = always `fedora-dev` (or Arthur). A box asked to do another box's job → **STOP-AND-SURFACE**.
+**Merge gate.** The promotion gate is REFSPEC-AWARE and fail-closed: routine feature-branch pushes (an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run AUTONOMOUSLY with no prompt; only a push that could touch `main` (a bare `git push`, a `main`/`HEAD`/`refs/tags/*` destination, `--all`/`--mirror`/`--tags`, or any unparseable / quoted / chained target) PLUS the merge verbs (`gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`, `gh api …/merge|/merges`) route to an in-session clickable `ask` only Arthur can answer. There is NO approval-marker mechanism (the shipped hook uses native `ask`); server-side branch protection on `main` is the PRIMARY backstop.
+
+**Handoff — the dev↔host loop.** The dev↔host loop runs autonomously EXCEPT the final merge: develop → open PR (feature pushes are autonomous) → label it `live-validate` → the host live-gate (Gate B) DISCOVERS it ORG-WIDE by that label (no repo list to maintain), fetches the PR head on-demand, applies a STRUCTURAL GUARD (only builds a candidate carrying a `Containerfile`/`.live-gate`, else skips cleanly), builds it DISPOSABLY per the repo's own in-repo `.live-gate` contract (PARSED, never executed) under loopback-only fences, and posts a GREEN/RED verdict comment → iterate (RED: push a fix, or SUPERSEDE the branch if the approach was wrong; GREEN: BUILD UPON it) until green → Arthur's discrete clickable APPROVE → fedora-dev merges. The human is OUT of the per-iteration loop — only the merge is a click. Repos are discovered DYNAMICALLY: create/rename/merge/delete freely; enroll one just by labelling its PR `live-validate` and shipping a `.live-gate`. Build = always CI; operate/deploy = always `fedora-bootstrap`; merge = always `fedora-dev` (or Arthur). A box asked to do another box's job → **STOP-AND-SURFACE**.
 
 **Control-plane class** = `policy/**`, `managed-settings.json`, `policy/hooks/gate-push.sh`, `.github/workflows/**`, `*.container`, `run.sh*` security flags + publish set, the box-rebuild/assemble machinery, key-sync, `*sudoers*` — standalone, never bundled.
 
@@ -72,18 +74,29 @@ included; a free-text "yes" is not approval). Control-plane/guardrail changes ar
   guardrail touched — NEVER bundled. (For other-repo control-plane, this is a flagged PR, not a
   push.)
 
+- **FLEET-WIDE MERGE GATE (the shared model).** The promotion gate is REFSPEC-AWARE and fail-closed:
+  routine feature-branch pushes (an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run
+  AUTONOMOUSLY with no prompt; only a push that could touch `main` (a bare `git push`, a
+  `main`/`HEAD`/`refs/tags/*` destination, `--all`/`--mirror`/`--tags`, or any unparseable / quoted /
+  chained target) PLUS the merge verbs (`gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`,
+  `gh api …/merge|/merges`) route to an in-session clickable `ask` only Arthur can answer. There is NO
+  approval-marker mechanism (the shipped hook uses native `ask`); server-side branch protection on
+  `main` is the PRIMARY backstop. **This box runs the stricter PR-only branch of that gate** — it
+  never merges, so there is nothing to `ask`; a detected push/merge is simply DENIED.
+
 - **MECHANICAL ENFORCEMENT (BUILT, not behavioral — the ultra-verify fix).** The push-prompt-by-
-  absence-of-allowlist is NOT sufficient on its own (defeated by one "don't ask again", `auto`
-  mode, `gh api`, MCP merge tools). The baked controls in `managed-settings.json` are:
-  1. a managed **`PreToolUse` hook** on Bash that DENIES (exit 2) any push/merge — incl.
-     `git push`, `gh pr merge`, `gh pr create --merge`, AND `gh api …/merges|/merge` and
-     `bash <wrapper>` — UNLESS a one-shot approval marker (written by the clickable decision
-     flow) is present. A blocking hook overrides even an allow rule, so it survives a
-     pre-allowlisted `git push`. Set `allowManagedHooksOnly: true`.
-  2. `disableBypassPermissionsMode: "disable"` AND `disableAutoMode: "disable"` (the latter was
-     missing in the seed — `auto` mode otherwise walks around the prompt).
+  absence-of-allowlist is NOT sufficient on its own (defeated by one "don't ask again", `gh api`,
+  MCP merge tools). The baked controls in `managed-settings.json` are:
+  1. a managed **`PreToolUse` hook** on Bash that fail-closed DENIES (exit 2) any push/merge — incl.
+     `git push`, `gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`, AND
+     `gh api …/merges|/merge` and `bash <wrapper>` — UNCONDITIONALLY on this PR-only box (NO approval
+     marker — there is none; the box never merges). A blocking hook overrides even an allow rule, so it
+     survives a pre-allowlisted `git push`. Set `allowManagedHooksOnly: true`.
+  2. `disableBypassPermissionsMode: "disable"` with `defaultMode: "auto"` — the gate is the hook +
+     server-side branch protection on `main`, NOT a disabled auto mode.
   3. `allowManagedPermissionRulesOnly: true` so the agent can't add an allow rule re-permitting
-     push; an MCP deny on any GitHub merge tool (the Bash hook never sees MCP calls).
+     push; blanket `git push` / `gh pr merge` deny rules; an MCP deny on any GitHub merge tool (the
+     Bash hook never sees MCP calls).
   4. a NARROW allowlist for the vault sync push only (`git -C <vault> push …`), so the vault
      exemption doesn't force a blanket `git push` allow.
 
