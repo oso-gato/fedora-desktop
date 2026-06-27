@@ -18,6 +18,122 @@ backstops below are BUILT controls, not aspirations).
 
 **Control-plane class** = `policy/**`, `managed-settings.json`, `policy/hooks/gate-push.sh`, `.github/workflows/**`, `*.container`, `run.sh*` security flags + publish set, the box-rebuild/assemble machinery, key-sync, `*sudoers*` — standalone, never bundled.
 
+## THE SELF-SUSTAINING APPARATUS — AUTONOMY MANDATE & DEFINITION OF DONE
+
+**The bedrock primary purpose.** `fedora-dev` (develop·build·merge) + `fedora-bootstrap` (operate the
+host live-gate) exist as ONE self-sustaining development apparatus — and this box (`fedora-desktop`)
+develops inside it. The apparatus's PRIMARY PURPOSE is to keep the human OUT of the loop until genuinely
+needed: the agent does MOST of the work and the thinking, runs the loop autonomously, and engages Arthur
+only at the genuine decision points below.
+
+**THE LOOP (every change) — TWO-TIER VALIDATION.** develop → open a PR (**the PR is the agent's PROOF
+OF WORK**) → validate → GREEN/RED verdict → iterate (RED: fix, or SUPERSEDE the branch if the approach
+was wrong; GREEN: build upon) → repeat UNTIL DONE. The agent runs this loop autonomously; only at the
+end does it engage the human. (This box is PR-only — it never merges; the loop's final merge is
+`fedora-dev`'s, on Arthur's discrete clickable APPROVE.) Validation is TWO-TIER — NOT every change goes
+to the host:
+
+- **TIER 1 — IN-BOX (the DEFAULT).** The dev-box `podman build` IS the throwaway: the agent develops,
+  validates, and iterates ENTIRELY in its own nested engine (build → validate → fix → rebuild,
+  rinse/repeat) for everything it CAN build+validate itself. NO host involvement — the human is nowhere
+  near this tier. The overwhelming majority of iteration lives here.
+- **TIER 2 — HOST (ONLY two scenarios, engaged via the `live-validate` label).** The host builds a
+  DISPOSABLE throwaway candidate and live-gates it (Gate B) ONLY when: **(1)** the dev box CANNOT
+  build/validate the throwaway itself — e.g. the systemd-PID-1 GRD lineage can't boot in the nested
+  engine, or any instance the nested engine can't fully build+run → the host does the throwaway
+  build+validate; OR **(2)** FINAL pre-production shipment — AFTER all in-box iterations are done, the
+  agent tickets the host (label `live-validate`) to run a throwaway build, prove it works LIVE on a real
+  host, then tear it down → and THEN present merge-to-main (the highest achievement). In-box iteration
+  does NOT touch the host.
+
+**AUTONOMY MANDATE (how the agent works — BINDING).**
+- The agent does MOST of the work and the thinking.
+- When there are options, the agent BUILDS 2–3 of them to test, iterates, DISCARDS the ones that don't
+  work or aren't quite right, and lands on the correct solution ITSELF — it does not shop options to the
+  human.
+- The agent makes the recommendation AND tests its own recommendation (throwaway build + live-gate),
+  rather than asking which to pick.
+- The agent TEARS DOWN and REBUILDS its own work, thinking harder to reach a ZERO-BASE, rather than
+  defending a first draft.
+- Presenting an options-decision to the human is RARE — reserved for a genuine human decision point; be
+  firm about that rarity.
+
+**ENGAGE THE HUMAN FOR EXACTLY TWO REASONS (no others).**
+1. **MATERIALLY COMPLETE** — the objective is met; requires the clickable APPROVE to merge.
+2. **MATERIALLY BLOCKED** — the agent genuinely cannot proceed and needs a DECISION (NOT a merge; a true
+   roadblock).
+Status-confirmation, option-shopping, and "which should I do" are NOT reasons to engage the human.
+
+**DEFINITION OF DONE (a change is DONE only when ALL hold).**
+1. The FULL objective is materially achieved (measured against the whole objective — not a rabbit-hole
+   sub-task / ~5% slice).
+2. Validated through the TWO-TIER loop: in-box build + assembly GREEN is the DEFAULT proof; the host
+   live-gate verdict GREEN (the live B-gates) is required for the two Tier-2 scenarios only — the
+   nested engine cannot build/validate it, OR final pre-production shipment — PROVEN, not merely built.
+3. Adheres to the BUILD PRINCIPLES (sources/provenance, minimalism, secrets/identity, deploy contract,
+   validate).
+4. A TLDR is written and the agent has CRITICALLY SELF-EXAMINED it against its own work — options
+   considered+discarded, reasoning, fit to BOTH the design objective AND the specific task objective, and
+   genuine gaps/forks/concessions. The agent dry-runs the TLDR AS IF it were the human, measured against
+   the total objective. If the TLDR FAILS its own scrutiny, the agent does NOT present — it returns to
+   the loop and continues until the TLDR passes.
+Only when 1–4 hold does the change go to the human (reason #1: approve-to-merge). The TLDR is the final
+step before the human.
+
+**THROWAWAY TREE & CHURN (build discipline — BINDING for every build, both tiers).**
+- **Use the LIVE tree where possible; bolt a throwaway tree on only for what must DIFFER.** For anything
+  that must differ from the live tree, stand up a SEPARATE, TEMPORARY throwaway tree. That throwaway
+  tree: **(a)** NEVER mutates the IMMUTABLE live tree — the host AND the dev-container base are immutable;
+  the throwaway tree + ALL build caches live on the WRITABLE home volume; **(b)** STILL obeys PROVENANCE
+  (Principle 2 / class a/b/c, GPG-signature / checksum verified) — NO loosening just because it's a
+  throwaway; **(c)** is THROWN AWAY after the build — disposable `localhost/disposable/<name>:val-<sha>`
+  tag, NEVER pushed, `--rm` + `rmi`, and the temp tree removed on teardown.
+- **CHURN BALANCE — persist the dnf PACKAGE CACHE, let everything else be EPHEMERAL (so a 50× iteration
+  does NOT re-download 50×).** The ONE durable input is the dnf PACKAGE CACHE — a plain BIND dir on the
+  home volume, NOT an image layer, so it SURVIVES `rmi` and EVERY disposal (empirically verified in-box) —
+  while the candidate image, its intermediate layers, the temp tree and the run container are all ephemeral
+  by design. Structure Containerfiles **HEAVY/STABLE-EARLY** (base, dnf install, class-(c) artifact
+  fetch+verify) and **CHURN-LATE** (COPY'd scripts/config); **NEVER `--no-cache` / prune during
+  churn** — that is reserved for the monthly clean `--no-cache` rebuild. The throwaway image is the OUTPUT;
+  the dnf package cache is the PERSISTENT INPUT — decoupled from BOTH the immutable live tree AND the
+  disposable candidate.
+- **CHURN MECHANISM — NO re-download across N PRs/iterations (proven in-box). The PR/SHA is NOT the
+  package cache's disposal signal.** Per-PR / per-SHA disposal removes the disposable image
+  (`localhost/disposable/<name>:val-<sha>`) + its temp throwaway tree — and, when that candidate was the
+  sole referrer, its intermediate LAYERS with it — but it NEVER removes the dnf package cache. The
+  package cache is NOT keyed to PR/SHA; it is SHARED across ALL iterations. **ONE persistent thing,
+  everything else ephemeral by design:**
+  - **(1) the persistent dnf PACKAGE CACHE — the ROBUST mechanism**, bind-mounted into the build
+    (`-v <home>/.cache/fd-dnf:/var/cache/libdnf5:rw`); a plain dir on the home volume, NOT an image layer,
+    so it survives `rmi` and every disposal. For churn that changes the dnf install LINE (an add-on PR)
+    the layer DOES re-run, but the RPMs are **SERVED FROM CACHE, not re-downloaded** — PROVEN: a forced
+    dnf re-run downloaded **0 B (vs 9.4 MiB cold), 3.7× faster**; only a genuinely-NEW package downloads
+    once, then it too is cached. (buildah `--mount=type=cache` does NOT work under the dev box's required
+    `--isolation=chroot`, verified — so the bind `-v` package cache IS the mechanism.)
+  - **(2) EPHEMERAL LAYERS — ephemeral BY DESIGN, and that is the ADVANTAGE.** Each throwaway's
+    intermediate layers are pruned when its sole candidate image is `rmi`'d — deliberately: (a) layer
+    storage SELF-BOUNDS on the limited VPS (no accumulation, no separate layer-cache bloat to GC); (b)
+    each throwaway is REBUILT FRESH from the package cache, re-resolving to CURRENT package versions every
+    time → no stale-frozen-layer risk (freshness for free); (c) the only cost is a few cheap local
+    CPU-seconds (~3.6 s warm), never bandwidth (the RPMs are already cached). While a candidate image IS
+    still present (LATE-layer churn, or a kept image) its layer cache also lets the rebuild skip the dnf
+    `RUN` entirely → ZERO work — a free accelerator for as long as that image lives — but nothing depends
+    on layers persisting across disposal.
+- **ISOLATION — no cross-build contamination.** Each build gets its OWN throwaway tree + a UNIQUE
+  disposable tag (`val-<sha>`) + a UNIQUE run container (`vcand-$$`), so concurrent or sequential builds
+  cannot collide. The persistent dnf package cache (and any still-live layer cache) is CONTENT-ADDRESSED (dnf RPM NEVRA +
+  checksum; layer digests), so a shared cache can NEVER serve a wrong version — sharing the cache is safe
+  precisely because the candidates are isolated and the cache is content-keyed.
+- **STORAGE SAFETY (limited VPS quota) — the trio.** **(a)** the disposable image + temp tree
+  SELF-DESTRUCT via `trap … EXIT` (fires on GREEN, RED, and error alike); **(b)** an ORPHAN SWEEPER reaps
+  anything a `kill -9` / crash leaks — stale `localhost/disposable/*` images, `vcand-*` run containers,
+  and orphan temp dirs — at watcher start AND periodically; **(c)** a BOUNDED cache-GC caps the persistent
+  dnf package cache age-then-size — pruning RPMs older than 45 days first, then LRU size-pruning to ≤ 15 GB
+  (both overridable env) — so it can NEVER exhaust the quota; the layer footprint needs no size cap because
+  each candidate's layers self-bound via its own `rmi` (dangling layers are swept opportunistically). The
+  package cache persists across all iterations; only the candidate is disposable, and nothing is allowed to
+  leak unboundedly.
+
 ## ROLE
 
 Arthur's personal remote workstation — the maintainer's box, two functions on one desktop:
