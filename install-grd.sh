@@ -59,17 +59,32 @@ $DNF install \
     fail2ban-server rsyslog sudo procps-ng glibc-langpack-en nano \
     tailscale \
     gnome-shell gnome-session mutter gsettings-desktop-schemas \
-    gnome-terminal nautilus \
+    ptyxis nautilus \
     gdm accountsservice python3-gobject \
     gnome-remote-desktop pipewire pipewire-libs wireplumber \
     xorg-x11-server-Xwayland mesa-dri-drivers mesa-libgbm openssl acl \
     ${WEB_PKGS} \
     ${DB_PKGS} \
-    firefox rclone \
+    firefox rclone fastfetch \
     code 1password 1password-cli
 # claude-code is DELIBERATELY NOT here (lives in the claudebox). onedrive is NOT
 # here (rclone-only). gnome-shell's webkitgtk6.0 + webkit2gtk4.1 + gnome-control-
 # center ride in as hard requires — disclosed, irreducible.
+#
+# DEFAULT TERMINAL = ptyxis (REPLACES gnome-terminal — ptyxis supersedes it, so
+# keeping both is redundant per Principle 3). ptyxis is the DEFAULT terminal on
+# BOTH lineages — "where the operator runs `claude`". On grd no extra config makes
+# it the default: GNOME-50's default terminal is resolved by GIO, NOT by the
+# `org.gnome.desktop.default-applications.terminal` gsetting (that schema still
+# exists but is marked "DEPRECATED ... ignored. The default terminal is handled in
+# GIO" — verified in F44's gsettings-desktop-schemas). GIO's find_terminal_executable
+# walks a built-in candidate list and runs the FIRST one present on $PATH; Fedora's
+# glib2 orders it `xdg-terminal-exec, ptyxis, kgx, gnome-terminal, …` (verified in
+# libgio-2.0). xdg-terminal-exec is NOT shipped, so once ptyxis is installed (and
+# gnome-terminal removed) ptyxis is the first available candidate => the GIO system
+# default for ALL users — no per-user provisioning. (ptyxis is already GTK4/libadwaita
+# native here: GNOME-shell pulls that toolkit in regardless, so unlike the XFCE/GTK3
+# lineage it adds no net-new toolkit closure.) fastfetch = the terminal greeting (below).
 
 # ---- core (uid 1000) + subuid/subgid for nested rootless podman -------------
 useradd -u 1000 -m -s /bin/bash core
@@ -151,6 +166,24 @@ if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null && { [ -n "${SSH_TTY:-}" ] |
     tmux has-session -t main 2>/dev/null || tmux new-session -d -s main 2>/dev/null || true
     exec tmux new-session -t main -s "c$$" \; set-option destroy-unattached on
 fi
+EOF
+
+# ---- fastfetch greeting on terminal start (system-wide; core + USER1..5) ------
+# Show a fastfetch system-info banner EXACTLY ONCE per login, in the tmux pane the
+# operator actually sees. Every interactive login is `exec`'d into tmux by the
+# zz-tmux-attach.sh drop-in above: the OUTER pre-attach login shell sources this
+# file via /etc/profile, and the shell tmux then spawns INSIDE the pane re-sources
+# it via /etc/bashrc (Fedora's /etc/bashrc loops /etc/profile.d/*.sh for non-login
+# interactive shells too — verified). Gating on $TMUX therefore fires fastfetch
+# ONLY in the in-tmux shell (visible pane) and NEVER in the outer shell that
+# `exec tmux` immediately replaces — exactly once, after the tmux UI is up.
+# System-wide /etc/profile.d needs NO per-user provisioning (covers USER1..5).
+cat > /etc/profile.d/zz-fastfetch.sh <<'EOF'
+# fastfetch greeting — once per login, inside the visible tmux pane only.
+case $- in *i*) ;; *) return 0 ;; esac
+[ -t 1 ] || return 0
+[ -n "${TMUX:-}" ] || return 0
+command -v fastfetch >/dev/null 2>&1 && fastfetch
 EOF
 
 # tmux server config: multi-device geometry policy + clean co-view (see the xrdp

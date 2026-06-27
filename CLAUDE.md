@@ -186,7 +186,8 @@ fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is
 | xfwm4 | Fedora current | a | XFCE window manager |
 | xfce4-panel | Fedora current | a | XFCE panel/taskbar |
 | xfdesktop | Fedora current | a | XFCE desktop background + icons |
-| xfce4-terminal | Fedora current | a | in-desktop terminal — where the operator runs `claude` |
+| ptyxis | Fedora current | a | the default terminal — where the operator runs `claude` — **both lineages** (REPLACES `xfce4-terminal` here / `gnome-terminal` on grd; ptyxis supersedes them, so keeping two is redundant per Principle 3). GNOME's modern container-aware terminal (Fedora Workstation default since F41). On xrdp it is GTK4/libadwaita, so it pulls a net-new `gtk4`+`libadwaita`+`vte291-gtk4` runtime closure onto the otherwise-GTK3 XFCE stack — **irreducible for this app, DISCLOSED** (Principle 3 "minimum relative to the chosen capability": a recorded Arthur-directed capability choice of one modern default terminal across both lineages, NOT a minimalism regression). On grd it adds no net-new toolkit (gnome-shell is already GTK4/libadwaita). Made the XFCE default via an exo `TerminalEmulator` helper; the GNOME default by GIO candidate-list resolution (`org.gnome.desktop.default-applications.terminal` is deprecated/ignored — handled in GIO) |
+| fastfetch | Fedora current | a | the system-info greeting shown on every interactive terminal start (system-wide `/etc/profile.d/zz-fastfetch.sh`; all users — core + USER1..5), **both lineages**. Fired once-only inside the visible tmux pane (gated on `$TMUX`, since the harness `exec`s every login into tmux and the in-tmux shell re-sources `/etc/profile.d`) |
 | Thunar | Fedora current | a | XFCE file manager (vault / cloud-mount browsing) |
 | xfce4-settings | Fedora current | a | `xfsettingsd` — XFCE settings daemon (theme/font/DPI/keyboard/cursor applied to GTK apps); `xfce4-session` does NOT hard-require it under `install_weak_deps=False`, so it's listed explicitly (else Firefox/VS Code/Obsidian/1Password render unstyled) |
 | dbus-x11 | Fedora current | a | `dbus-launch`/session bus (Electron + gnome-keyring need it) |
@@ -222,9 +223,16 @@ fedora-dev HARNESS (PART A) and the XFCE/xrdp DESKTOP (PART B). `claude-code` is
 | guacamole-auth-totp | Apache `.tar.gz` (`GUAC_VERSION`) → `.jar` extension | c | TOTP / Google-Authenticator 2FA on the public :8443 door — QR shown at first login, seed stored in the DB. No class-(a)/(b) source. **GPG-verified** against the SAME pinned Apache key (`GUAC_GPG_FP`), identical pattern; `.jar` into `/etc/guacamole/extensions/`. A class-(c) artifact |
 
 **Desktop note (xrdp is XFCE-ONLY).** `DESKTOP_ENV=xfce` is the sole xrdp variant (the `case`
-in `install.sh` rejects anything else). The XFCE leaf set (`xfce4-session`…`xfce4-settings`) lives
-in that case (single source of truth, "tabled by reference" per Principle 3), PLUS baked `/etc/xdg`
-xfconf defaults tuned for the headless, no-GPU, still-image web door: **`xfwm4` compositing OFF**
+in `install.sh` rejects anything else). The XFCE leaf set (`xfce4-session`…`ptyxis`…`xfce4-settings`) lives
+in that case (single source of truth, "tabled by reference" per Principle 3). The in-desktop terminal
+in that set is **`ptyxis`** — it REPLACED `xfce4-terminal` (ptyxis supersedes it, Principle 3); it is
+the **default terminal** via a baked exo `TerminalEmulator` helper (`/usr/share/xfce4/helpers/ptyxis.desktop`
++ `/etc/xdg/xfce4/helpers.rc` `TerminalEmulator=ptyxis`), so the panel / Thunar "Open Terminal"
+launch ptyxis. ptyxis is GTK4/libadwaita, so on this otherwise-GTK3 XFCE stack it pulls a net-new
+`gtk4`+`libadwaita`+`vte291-gtk4` closure — **disclosed capability trade-off** (Principle 3, NOT bloat;
+the GTK3 stack stays for Firefox/Electron). A system-wide `fastfetch` greeting (`/etc/profile.d/zz-fastfetch.sh`,
+`$TMUX`-gated for once-only display) prints on every interactive terminal start, all users. PLUS baked
+`/etc/xdg` xfconf defaults tuned for the headless, no-GPU, still-image web door: **`xfwm4` compositing OFF**
 (the load-bearing runtime lever — no XRender shadow/transparency churn for guacd; xfwm4 also
 auto-disables it under llvmpipe, we PIN it for determinism), GTK animations off, and a **solid
 desktop colour** (no wallpaper image → smaller dirty-region encode on connect; the backdrop's
@@ -276,6 +284,18 @@ WRONG TOOL for a headless RDP door, not merely unproven. (An earlier draft of th
 - The public :8443 door is Guacamole-over-RDP on both lineages. **grd v1 has no native VNC mirror**
   (the per-user `--headless` daemons serve RDP; a tailnet `:5900x` VNC mirror is a follow-up — `grdctl
   --headless vnc` can expose it per user).
+- **Default terminal = `ptyxis` on BOTH lineages** (it replaced `xfce4-terminal` on xrdp / `gnome-terminal`
+  on grd). On **grd** ptyxis is the GIO system default with NO extra config: GNOME-50 resolves the terminal
+  in GIO (the `org.gnome.desktop.default-applications.terminal` gsetting is deprecated/ignored), and Fedora's
+  glib2 lists `xdg-terminal-exec, ptyxis, kgx, gnome-terminal, …` — `xdg-terminal-exec` is not shipped, so
+  with gnome-terminal removed ptyxis is the first available candidate (verified in `libgio-2.0`). ptyxis is
+  already GTK4/libadwaita native on grd (gnome-shell pulls that toolkit anyway → no net-new closure). On
+  **xrdp** ptyxis is set as the exo `TerminalEmulator` helper default and DOES add a net-new
+  `gtk4`+`libadwaita`+`vte291-gtk4` closure onto the GTK3 stack — disclosed capability trade-off, not bloat.
+- **`fastfetch` greeting on both lineages:** a system-wide `/etc/profile.d/zz-fastfetch.sh` (no per-user
+  provisioning; covers core + USER1..5) prints a once-only system-info banner inside the visible tmux pane
+  on every interactive terminal start (`$TMUX`-gated — the harness `exec`s every login into tmux and the
+  in-tmux shell re-sources `/etc/profile.d`, so the banner shows exactly once, in the pane the user sees).
 
 **systemd-PID-1 = STOP-AND-SURFACE (grd only).** The grd lineage requires the HOST to grant cgroup-v2
 delegation + a writable `/sys/fs/cgroup` — a wider host-trust ask than the xrdp lineage. It deploys
@@ -431,13 +451,13 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | README.md | human-facing project doc (TL;DR, Build Principles, Packages, Deploy, Operate, design appendix) |
 | CLAUDE.md | this file — agent rules for editing this repo |
 | Containerfile | base image build spec (`FROM fedora:ARG`; pinned `GUAC_VERSION` + `GUAC_GPG_FP`; `DESKTOP_ENV=xfce`; runs install.sh; COPYs entrypoint + box seed + bin/ + policy/hooks/; `EXPOSE` metadata; `VOLUME`s incl. `/var/lib/mysql`) |
-| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (the XFCE/xrdp desktop: XFCE, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion + the GPG-verified guacamole-auth-ban/-jdbc/-totp extensions + MariaDB + the JDBC driver + the stashed `001` schema). Fails fast if the desktop ARGs aren't threaded through |
+| install.sh | base image install — PART A (fedora-dev harness verbatim) + PART B (the XFCE/xrdp desktop: XFCE, `ptyxis` as the default terminal [exo `TerminalEmulator` helper] + `fastfetch` greeting drop-in, xrdp/guacd/Tomcat, the app set, rclone rpm, Obsidian AppImage, guacamole.war conversion + the GPG-verified guacamole-auth-ban/-jdbc/-totp extensions + MariaDB + the JDBC driver + the stashed `001` schema). Fails fast if the desktop ARGs aren't threaded through |
 | entrypoint.sh | PID 1 (root): seeds `core`'s password from RDP_PW; syncs ssh keys; mints the Guacamole TLS keystore; brings up the loopback MariaDB engine + provisions DB-auth/TOTP via the shared `guac-db-provision.sh`; supervises rsyslog + sshd + fail2ban + tailscaled + the rootless podman socket + inotify rebuild-watcher + daily-tick + first-boot live-clone-or-seed + eager claudebox assemble + xrdp-sesman/xrdp + **mariadbd** + guacd + Tomcat + the optional RFB_PW VNC mirror + the cloud-sync/vault-gitsync helpers; single `pgrep`/`kill -0` watchdog; SIGTERM trap for clean shutdown |
 | spin-up.sh | interactive spin-up wizard (the by-hand entry point): ASKS for RDP_PW/GUAC_PW/WEB_PORT/TS_AUTHKEY (+ fleet tiles, extra users) + IMAGE (defaults to the GHCR image), exports them, then `exec`s run.sh (grd: run.sh.grd). Mirrors fedora-dev/spin-up.sh; run.sh stays the non-interactive contract it wraps. NOT control-plane (gathers inputs; run.sh holds the security flags) |
 | run.sh | manual deploy contract (`podman run -d` with --health-cmd, devices, volumes, restart, the public-only publish set + runtime secrets); fallback for non-systemd hosts. **CONTROL-PLANE (security flags + publish set)** |
 | fedora-desktop.container | systemd Quadlet (Pull=missing, Notify=healthy, AutoUpdate=registry, HealthCmd, the three Volumes, SecurityLabelDisable=true, the public-only PublishPort set, commented Secret= lines). **CONTROL-PLANE** |
 | Containerfile.grd | **grd lineage** base image (GNOME-Wayland / GRD; `FROM fedora:ARG`; ARGs `GUAC_VERSION`/`GUAC_GPG_FP`; runs install-grd.sh; COPYs entrypoint-grd + the shared box seed; `ENTRYPOINT /sbin/init`; `STOPSIGNAL SIGRTMIN+3`). systemd-PID-1 |
-| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD + the Guacamole web door (guacd/Tomcat/.war + GPG-verified guacamole-auth-ban). **Variant-1 turnkey:** installs `gdm`/`accountsservice`/`python3-gobject`, enables sshd/rsyslog/fail2ban/tailscaled + the web units + `gdm.service` + the firstboot oneshot, `systemctl set-default graphical.target`, `--global enable gnome-remote-desktop-headless.service`, fail-closed-asserts the GRD units exist; sets core linger; stamps the tmux login-attach drop-in + `/etc/tmux.conf` (harness parity with the xrdp lineage — single `main` group, per-client geometry); bakes lineage=grd |
+| install-grd.sh | grd-lineage install: the fedora-dev harness as systemd units + GNOME-50 Wayland (minimal leaf) + GRD + the Guacamole web door (guacd/Tomcat/.war + GPG-verified guacamole-auth-ban). **Variant-1 turnkey:** installs `gdm`/`accountsservice`/`python3-gobject`, enables sshd/rsyslog/fail2ban/tailscaled + the web units + `gdm.service` + the firstboot oneshot, `systemctl set-default graphical.target`, `--global enable gnome-remote-desktop-headless.service`, fail-closed-asserts the GRD units exist; sets core linger; stamps the tmux login-attach drop-in + the `fastfetch` greeting drop-in + `/etc/tmux.conf` (harness parity with the xrdp lineage — single `main` group, per-client geometry); installs `ptyxis` as the default terminal (GIO candidate-list resolution, gnome-terminal removed); bakes lineage=grd |
 | entrypoint-grd.sh | grd first-boot oneshot (NOT PID 1): provisions core + optional USER1..5; per-user TLS PEM; Guacamole web door via DB-auth+TOTP (waits on `mariadb.service`, sources `guac-db-provision.sh`; **`security=any`** [GRD is NLA], no bpp pin, `RDP_PORT_PER_USER`); then PER USER enables `gnome-headless-session@<user>` + configures `grdctl --headless` (set-credentials + per-user `set-port` 3389+n, negotiation off) + starts the user `gnome-remote-desktop-headless.service`. Host-validated recipe (validation/grd-headless-spike.sh) |
 | run.sh.grd | grd deploy contract (`--systemd=always --cgroupns=host -v /sys/fs/cgroup`); secrets RDP_PW+GUAC_PW (RFB_PW optional) + the `/guacamole/` health path; secrets via bind-mounted `/etc/fedora-desktop/secrets.env`. **CONTROL-PLANE** + STOP-AND-SURFACE (needs a cgroup-v2-delegating host) |
 | .live-gate | top-level per-repo **live-gate contract** — sourced as shell env (PARSED, never executed) by the host's live-gate (Gate B) when this repo's PR is labelled `live-validate`. A MULTI-TARGET spec declaring **both lineages** as build targets — **xrdp** (`Containerfile`) + **grd** (`Containerfile.grd`) — each with its run-contract FENCE (the lineage's run.sh/run.sh.grd flags MINUS the public `-p` MINUS real secrets), `/guacamole/` 200 + RDP `:3389` PROBE, `--health-cmd`, and disposable scratch secrets. **Both lineages are thus live-gated pre-merge** (built + run + probed disposably under loopback-only fences before Arthur's merge click) |
