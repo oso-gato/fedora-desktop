@@ -50,8 +50,17 @@ The box is built to do **most of the work and the thinking itself**, and to come
 possible. When there's a choice to make, it **builds two or three options, tries them, throws away the
 ones that don't fit, and lands on the right one on its own** — it tests its own recommendation rather
 than asking you which to pick, and it will tear its own first draft down and rebuild it to get the
-answer right. Each change is worked as a loop: open a PR (**the PR is its proof of work**), let the host
-build a throwaway copy and live-test it, read the GREEN/RED verdict, and iterate until it's actually done.
+answer right. Each change is worked as a loop: open a PR (**the PR is its proof of work**), build a
+throwaway copy, test it, read the GREEN/RED verdict, and iterate until it's actually done.
+
+Most of that testing happens **right here inside the box** — its own build engine spins up a throwaway
+copy, checks it, and is rebuilt over and over without ever touching the real server. The real server is
+only brought in for **two things**: when something genuinely can't be built or run inside the box (some
+images need to boot like a full machine, which the in-box engine can't do), or as the **final dress
+rehearsal** before shipping — build a throwaway on a real host, prove it works live, tear it down, and
+only then ask you to merge. Each throwaway is built off the real recipe, kept honest about where every
+package comes from, and deleted afterwards — but the box keeps its download cache, so iterating fifty
+times doesn't re-download anything fifty times.
 
 It comes to you for **exactly two reasons**: (1) a change is **finished and proven** and needs your one
 **click to approve the merge**, or (2) it's genuinely **stuck and needs a decision** (a real roadblock —

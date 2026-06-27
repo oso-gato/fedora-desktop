@@ -26,12 +26,25 @@ develops inside it. The apparatus's PRIMARY PURPOSE is to keep the human OUT of 
 needed: the agent does MOST of the work and the thinking, runs the loop autonomously, and engages Arthur
 only at the genuine decision points below.
 
-**THE LOOP (every change).** develop → open a PR (**the PR is the agent's PROOF OF WORK**) → label
-`live-validate` → the host builds a DISPOSABLE throwaway candidate and live-gates it (Gate B) →
-GREEN/RED verdict → iterate (RED: fix, or SUPERSEDE the branch if the approach was wrong; GREEN: build
-upon) → repeat UNTIL DONE. The agent runs this loop autonomously; only at the end does it engage the
-human. (This box is PR-only — it never merges; the loop's final merge is `fedora-dev`'s, on Arthur's
-discrete clickable APPROVE.)
+**THE LOOP (every change) — TWO-TIER VALIDATION.** develop → open a PR (**the PR is the agent's PROOF
+OF WORK**) → validate → GREEN/RED verdict → iterate (RED: fix, or SUPERSEDE the branch if the approach
+was wrong; GREEN: build upon) → repeat UNTIL DONE. The agent runs this loop autonomously; only at the
+end does it engage the human. (This box is PR-only — it never merges; the loop's final merge is
+`fedora-dev`'s, on Arthur's discrete clickable APPROVE.) Validation is TWO-TIER — NOT every change goes
+to the host:
+
+- **TIER 1 — IN-BOX (the DEFAULT).** The dev-box `podman build` IS the throwaway: the agent develops,
+  validates, and iterates ENTIRELY in its own nested engine (build → validate → fix → rebuild,
+  rinse/repeat) for everything it CAN build+validate itself. NO host involvement — the human is nowhere
+  near this tier. The overwhelming majority of iteration lives here.
+- **TIER 2 — HOST (ONLY two scenarios, engaged via the `live-validate` label).** The host builds a
+  DISPOSABLE throwaway candidate and live-gates it (Gate B) ONLY when: **(1)** the dev box CANNOT
+  build/validate the throwaway itself — e.g. the systemd-PID-1 GRD lineage can't boot in the nested
+  engine, or any instance the nested engine can't fully build+run → the host does the throwaway
+  build+validate; OR **(2)** FINAL pre-production shipment — AFTER all in-box iterations are done, the
+  agent tickets the host (label `live-validate`) to run a throwaway build, prove it works LIVE on a real
+  host, then tear it down → and THEN present merge-to-main (the highest achievement). In-box iteration
+  does NOT touch the host.
 
 **AUTONOMY MANDATE (how the agent works — BINDING).**
 - The agent does MOST of the work and the thinking.
@@ -54,9 +67,9 @@ Status-confirmation, option-shopping, and "which should I do" are NOT reasons to
 **DEFINITION OF DONE (a change is DONE only when ALL hold).**
 1. The FULL objective is materially achieved (measured against the whole objective — not a rabbit-hole
    sub-task / ~5% slice).
-2. Validated through the loop: in-box build + assembly GREEN AND the host live-gate verdict GREEN (the
-   live B-gates) — PROVEN, not merely built. (Where the host cannot yet gate it, the strongest available
-   validation + an explicit host-validation handoff.)
+2. Validated through the TWO-TIER loop: in-box build + assembly GREEN is the DEFAULT proof; the host
+   live-gate verdict GREEN (the live B-gates) is required for the two Tier-2 scenarios only — the
+   nested engine cannot build/validate it, OR final pre-production shipment — PROVEN, not merely built.
 3. Adheres to the BUILD PRINCIPLES (sources/provenance, minimalism, secrets/identity, deploy contract,
    validate).
 4. A TLDR is written and the agent has CRITICALLY SELF-EXAMINED it against its own work — options
@@ -66,6 +79,24 @@ Status-confirmation, option-shopping, and "which should I do" are NOT reasons to
    the loop and continues until the TLDR passes.
 Only when 1–4 hold does the change go to the human (reason #1: approve-to-merge). The TLDR is the final
 step before the human.
+
+**THROWAWAY TREE & CHURN (build discipline — BINDING for every build, both tiers).**
+- **Use the LIVE tree where possible; bolt a throwaway tree on only for what must DIFFER.** For anything
+  that must differ from the live tree, stand up a SEPARATE, TEMPORARY throwaway tree. That throwaway
+  tree: **(a)** NEVER mutates the IMMUTABLE live tree — the host AND the dev-container base are immutable;
+  the throwaway tree + ALL build caches live on the WRITABLE home volume; **(b)** STILL obeys PROVENANCE
+  (Principle 2 / class a/b/c, GPG-signature / checksum verified) — NO loosening just because it's a
+  throwaway; **(c)** is THROWN AWAY after the build — disposable `localhost/disposable/<name>:val-<sha>`
+  tag, NEVER pushed, `--rm` + `rmi`, and the temp tree removed on teardown.
+- **CHURN BALANCE — persist the CACHE, discard only the CANDIDATE (so a 50× iteration does NOT
+  re-download 50×).** The podman LAYER CACHE on the home volume SURVIVES `rmi` of the candidate tag
+  (empirically verified in-box). Therefore: structure Containerfiles **HEAVY/STABLE-EARLY** (base, dnf
+  install, class-(c) artifact fetch+verify) and **CHURN-LATE** (COPY'd scripts/config); churn only the
+  late layers so the heavy layers are REUSED → zero re-download. **NEVER `--no-cache` / prune during
+  churn** — that is reserved for the monthly clean `--no-cache` rebuild. The throwaway is the OUTPUT; the
+  cache is the PERSISTENT INPUT — decoupled from BOTH the immutable live tree AND the disposable
+  candidate. (Note: buildah `--mount=type=cache` does NOT persist under the dev box's required
+  `--isolation=chroot`, verified — the layer cache is the mechanism.)
 
 ## ROLE
 

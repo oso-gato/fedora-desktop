@@ -60,12 +60,27 @@ MOST of the work + the thinking and runs the loop above autonomously — **the P
 - **Engage the human for EXACTLY TWO reasons:** (1) MATERIALLY COMPLETE → the clickable APPROVE to
   merge; (2) MATERIALLY BLOCKED → a genuine roadblock needing a DECISION (not a merge). Status-checks,
   option-shopping, and "which should I do" are NOT reasons.
+- **Two-tier validation — NOT every change goes to the host.** *Tier 1 — IN-BOX (the DEFAULT):* the
+  dev-box `podman build` IS the throwaway — develop + validate + iterate ENTIRELY in the nested engine
+  for everything it CAN build+validate itself, with NO host involvement (the overwhelming majority of
+  iteration). *Tier 2 — HOST (via the `live-validate` label, ONLY two scenarios):* (1) the nested engine
+  CANNOT build/run the throwaway (e.g. the systemd-PID-1 GRD lineage that can't boot nested) → the host
+  does the throwaway build+validate; (2) FINAL pre-production shipment — after all in-box iterations, the
+  agent tickets the host to throwaway-build, prove it works LIVE, and tear it down, THEN presents
+  merge-to-main. In-box iteration does NOT touch the host.
+- **Throwaway tree & churn (build discipline).** Build off the LIVE tree where possible; for anything
+  that must DIFFER, bolt on a SEPARATE, TEMPORARY throwaway tree that never mutates the IMMUTABLE live
+  tree (host + dev-container base are immutable; throwaway tree + caches live on the writable home
+  volume), still obeys PROVENANCE (no loosening), and is THROWN AWAY after the build (disposable tag,
+  `--rm` + `rmi`). Churn balance: the home-volume LAYER CACHE survives `rmi` of the candidate, so
+  Containerfiles go HEAVY/STABLE-EARLY + CHURN-LATE and never `--no-cache` mid-churn — a 50× iteration
+  re-downloads nothing.
 - **Definition of Done (all four).** (1) the FULL objective materially achieved (not a ~5% slice); (2)
-  validated through the loop — in-box build GREEN AND the host live-gate verdict GREEN (or, where the
-  host cannot yet gate it, the strongest available validation + an explicit host-validation handoff);
-  (3) adheres to the BUILD PRINCIPLES; (4) a self-examined TLDR that the agent dry-runs AS IF it were
-  the human — if it fails its own scrutiny the agent returns to the loop instead of presenting. Only
-  then does the change go to the human.
+  validated through the two-tier loop — in-box build GREEN is the default proof, with the host live-gate
+  verdict GREEN required for the two Tier-2 scenarios only (nested engine can't validate it, OR final
+  pre-production shipment); (3) adheres to the BUILD PRINCIPLES; (4) a self-examined TLDR that the agent
+  dry-runs AS IF it were the human — if it fails its own scrutiny the agent returns to the loop instead
+  of presenting. Only then does the change go to the human.
 
 ## The three boxes
 
