@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fedora-desktop — GRD lineage install (systemd-PID-1).
 # ============================================================================
-# Minimal GNOME-50 Wayland desktop + GNOME Remote Desktop (RDP+VNC) + Apache
+# Minimal GNOME-50 Wayland desktop + GNOME Remote Desktop (RDP; VNC a v1 follow-up) + Apache
 # Guacamole web door + the fedora-dev harness re-expressed as systemd units +
 # the four apps. MINIMAL LEAF packages only (install_weak_deps=False, PRINCIPLE
 # 3): the gnome-shell webkit/control-center closure is the IRREDUCIBLE hard-dep
@@ -91,8 +91,8 @@ useradd -u 1000 -m -s /bin/bash core
 printf 'core:10000:55000\n' > /etc/subuid
 printf 'core:10000:55000\n' > /etc/subgid
 usermod -aG wheel core
-setcap cap_setuid+ep /usr/bin/newuidmap || true
-setcap cap_setgid+ep /usr/bin/newgidmap || true
+setcap cap_setuid+ep /usr/bin/newuidmap
+setcap cap_setgid+ep /usr/bin/newgidmap
 
 # ---- harness as systemd units ----------------------------------------------
 systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.service
@@ -101,6 +101,59 @@ systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.servic
 # write the linger marker directly (idempotent). (Per-user DESKTOP sessions are
 # spawned by gdm/gnome-headless-session@ — see below — not by this marker.)
 mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/core
+
+# ---- runtime cap restore on newuidmap/newgidmap (ROOT oneshot) --------------
+# The build-time setcap (above) doesn't always survive a layer commit / volume — the
+# security.capability xattr can be stripped, and without these caps core's nested
+# rootless podman fails ("newuidmap: write to uid_map failed"). The xrdp lineage
+# re-asserts them inline at boot (entrypoint.sh); the systemd idiom is a root oneshot
+# ordered Before=systemd-user-sessions.service so the caps are back BEFORE core's
+# lingered user manager assembles the claudebox. Idempotent: sets only if missing.
+cat > /etc/systemd/system/fedora-desktop-grd-caps.service <<'EOF'
+[Unit]
+Description=fedora-desktop GRD: restore newuidmap/newgidmap file caps (root)
+Before=systemd-user-sessions.service user@1000.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for bin in /usr/bin/newuidmap /usr/bin/newgidmap; do [ -x "$bin" ] || continue; if ! getcap "$bin" | grep -q "cap_set"; then case "$bin" in */newuidmap) setcap cap_setuid+ep "$bin" ;; */newgidmap) setcap cap_setgid+ep "$bin" ;; esac && echo "[caps] restored on $bin" || echo "[caps] FAILED to restore $bin (no CAP_SETFCAP?)" >&2; fi; done'
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable fedora-desktop-grd-caps.service
+
+# ---- nft tailnet-guard as an EARLY, always-on oneshot (NOT the DB-gated firstboot) -----
+# The web gateway (:8443) is the ONLY public door; ssh (:22), mosh, every GRD RDP port
+# (:3389-3394) + the reserved VNC :5900 are TAILNET-ONLY, dropped on all ifaces but lo +
+# tailscale0. xrdp applies this guard in PID-1, so it is present whenever ANY listener is.
+# On grd the guard previously lived INSIDE the firstboot oneshot (Requires=mariadb.service):
+# a DB/provisioning failure left sshd + tailscaled up with NO guard. Lift it to its own
+# oneshot ordered Before the listeners, with NO Requires=mariadb, so the tailnet-only
+# boundary holds regardless of provisioning. Non-fatal (parity: no NET_ADMIN/nft → log+skip).
+install -d -m 0700 /etc/fedora-desktop
+cat > /etc/fedora-desktop/tailnet-guard.nft <<'NFT'
+table inet fd_tailnet_guard {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname "lo" accept
+    iifname "tailscale0" accept
+    tcp dport { 22, 3389-3394, 5900 } drop
+    udp dport 61001-62000 drop
+  }
+}
+NFT
+cat > /etc/systemd/system/fedora-desktop-grd-netguard.service <<'EOF'
+[Unit]
+Description=fedora-desktop GRD: tailnet-only nft guard (ssh/mosh/RDP/VNC off non-tailnet ifaces)
+Before=sshd.service tailscaled.service fedora-desktop-grd-firstboot.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/sbin/nft -f /etc/fedora-desktop/tailnet-guard.nft || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)" >&2'
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable fedora-desktop-grd-netguard.service
 
 # ---- sshd hardening + persistent host keys + fail2ban jail (xrdp harness parity) ----
 # install-grd enabled sshd/rsyslog/fail2ban as units, but without these configs the grd
@@ -128,6 +181,10 @@ cat > /etc/systemd/system/sshd.service.d/10-persistent-hostkey.conf <<'EOF'
 [Service]
 ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/tailscale/hostkeys
 ExecStartPre=/bin/bash -c '[ -f /var/lib/tailscale/hostkeys/ssh_host_ed25519_key ] || ssh-keygen -t ed25519 -N "" -f /var/lib/tailscale/hostkeys/ssh_host_ed25519_key'
+# Sync core's authorized_keys from github.com/oso-gato.keys BEFORE sshd starts, so the
+# first-EVER boot has NO keyless window (sshd is key-only). Runs as core (writes core's
+# ~/.ssh at 0600); keeps the cached file on a fetch failure. Mirrors entrypoint.sh.
+ExecStartPre=-/usr/sbin/runuser -u core -- /bin/bash -c 'set -u; mkdir -p ~/.ssh; chmod 0700 ~/.ssh; tmp=$(mktemp); if curl -fsSL --max-time 10 https://github.com/oso-gato.keys -o "$tmp" && [ -s "$tmp" ]; then mv "$tmp" ~/.ssh/authorized_keys; chmod 0600 ~/.ssh/authorized_keys; echo "[ssh-keys] synced from github.com/oso-gato.keys ($(wc -l < ~/.ssh/authorized_keys) keys)"; else rm -f "$tmp"; if [ -s ~/.ssh/authorized_keys ]; then echo "[ssh-keys] GitHub unreachable; keeping cached ~/.ssh/authorized_keys"; else echo "[ssh-keys] WARNING: GitHub unreachable AND no cached keys — public ssh closed; use Tailscale SSH to recover"; fi; fi'
 EOF
 # fail2ban jail: brute-force lockout on ssh, reading rsyslog's /var/log/secure, with tailnet
 # CGNAT (100.64/10) + loopback ignore'd. nftables backend (no firewalld). Identical to xrdp.
@@ -145,6 +202,35 @@ banaction = nftables[type=multiport]
 enabled = true
 port = 22
 logpath = /var/log/secure
+EOF
+
+# ---- surface the Tailscale interactive login on remote logins until the node
+# is on the tailnet. A fresh state volume has no persisted identity, so the
+# one-time browser join has to happen somewhere — and on grd ssh is tailnet-ONLY
+# (no public door at all), so a freshly-deployed box has no shell until it joins
+# the tailnet. Print the live login URL on each interactive login until connected.
+# Runs BEFORE the tmux attach below (tmux redraws the screen and would hide it);
+# zz-tailscale-login sorts before zz-tmux-attach by filename. Mirrors the xrdp install.sh.
+cat > /etc/profile.d/zz-tailscale-login.sh <<'EOF'
+# Show the Tailscale login URL on interactive logins while not yet connected.
+# Silent once BackendState=Running (identity persists on the fedora-desktop-state
+# volume, so this only nags until the one-time join is done).
+case $- in *i*) ;; *) return ;; esac
+[ -t 0 ] || return
+command -v tailscale >/dev/null 2>&1 || return
+_ts_state=$(tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState": *"\([^"]*\)".*/\1/p')
+if [ -n "$_ts_state" ] && [ "$_ts_state" != "Running" ]; then
+    _ts_url=$(tailscale status --json 2>/dev/null | sed -n 's/.*"AuthURL": *"\([^"]*\)".*/\1/p')
+    printf '\n\033[1;33m  Tailscale is not connected (state: %s).\033[0m\n' "$_ts_state"
+    if [ -n "$_ts_url" ]; then
+        printf '     Open this in a browser to join the tailnet (one-time):\n       \033[4m%s\033[0m\n' "$_ts_url"
+    else
+        printf '     No login URL yet - run:  tailscale up --ssh --hostname=fedora-desktop-grd\n'
+    fi
+    printf '     Tailnet SSH works once you approve it; this notice then disappears.\n\n'
+    read -rt 60 -p '     Press Enter to continue to your shell... ' _ts_ack || true
+fi
+unset _ts_state _ts_url _ts_ack 2>/dev/null || true
 EOF
 
 # ---- every interactive remote login lands in the persistent tmux workspace ----
@@ -322,12 +408,14 @@ systemctl --global enable claudebox-bootstrap.service
 #    entrypoint.sh:600-601). Both scripts self-loop, no-op when unconfigured, tolerate
 #    absence. Prefer the LIVE clone's copy (so live edits take effect), fall back to the
 #    baked seed. vault-gitsync is the one push the promotion gate allowlists (data continuity).
+#    NO After=claudebox-bootstrap ordering: data-sync must NOT wait on the multi-minute
+#    claudebox assemble (xrdp runs these helpers in parallel) — the ExecStart already
+#    prefers the live clone with a baked-seed fallback, so neither needs the box assembled.
 for _svc in cloud-sync vault-gitsync; do
 cat > "/etc/systemd/user/${_svc}.service" <<UNIT_EOF
 [Unit]
 Description=fedora-desktop-grd: ${_svc} (core)
 ConditionUser=core
-After=claudebox-bootstrap.service
 [Service]
 ExecStart=/bin/bash -c 'p=/home/core/.local/share/fedora-dev/bin/${_svc}.sh; [ -f "\$p" ] || p=/usr/local/share/fedora-dev/bin/${_svc}.sh; exec bash "\$p"'
 Restart=always
@@ -444,10 +532,9 @@ echo "guacamole.war: GOOD signature from pinned Apache key ${GUAC_GPG_FP}"
 rm -rf "$GNUPGHOME"; unset GNUPGHOME
 javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
 rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
-# 0751 (not 0750): core (other) must TRAVERSE this tomcat-owned dir to read its
-# own core-owned RDP TLS key (grd-key.pem, 0600) — else GRD's RDP can't start.
-install -d -m 0751 -o tomcat -g tomcat /etc/guacamole /var/lib/guac-cert
-printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\n' > /etc/guacamole/guacamole.properties
+install -d -m 0750 -o tomcat -g tomcat /etc/guacamole /var/lib/guac-cert
+# guacamole.properties is written at first boot by bin/guac-db-provision.sh (the
+# authoritative DB-auth/TOTP config incl. the runtime DB password) — not baked here.
 # Guacamole fronts GRD's LOOPBACK RDP (127.0.0.1:3389, security=tls). The web
 # user-mapping (creds + the GRD TLS params) is written at first boot by
 # entrypoint-grd (it needs the runtime RDP_PW/GUAC_PW). TLS :8443 connector:
@@ -540,6 +627,10 @@ cat > /etc/systemd/system/guacd.service.d/10-bind-loopback.conf <<'EOF'
 [Service]
 ExecStart=
 ExecStart=/usr/sbin/guacd -f -b 127.0.0.1
+# Self-heal the public-door proxy: stock guacd.service ships no Restart= — a guacd crash kills
+# every web login until manual restart. Parity with the xrdp watchdog (and the tomcat F2 drop-in).
+Restart=always
+RestartSec=5s
 EOF
 systemctl enable mariadb.service guacd.service tomcat.service
 install -d -m 0755 /etc/systemd/system/tomcat.service.d
@@ -556,11 +647,19 @@ Requires=mariadb.service fedora-desktop-grd-firstboot.service
 # NO extensions (jdbc/totp/auth-ban) + NO guacamole.properties -> no auth backend ->
 # "An error has occurred" on the web page. Without this the grd web door cannot authenticate.
 Environment=GUACAMOLE_HOME=/etc/guacamole
+# Stock tomcat.service ships NO Restart= — a JVM crash leaves the SOLE public :8443
+# door dead PERMANENTLY (podman --restart=always only acts on container exit, while
+# systemd PID1 stays up). The xrdp lineage heals catalina via its watchdog; here
+# Restart=always respawns the public door on ANY death (parity with xrdp's "any
+# death respawns" for the public door).
+Restart=always
+RestartSec=5s
 EOF
 
 # ---- first-boot config oneshot (users, TLS, per-user GRD, DB-auth) ----------
-# entrypoint-grd.sh runs ONCE under systemd; it reads the runtime secrets from
-# the unit Environment (run.sh.grd / the Quadlet pass them). It provisions core +
+# entrypoint-grd.sh runs ONCE under systemd; it reads the runtime secrets from the
+# bind-mounted /etc/fedora-desktop/secrets.env (run.sh.grd writes it — grd is
+# run.sh.grd-only, there is NO grd Quadlet). It provisions core +
 # optional USER{1..5}, then per user enables gnome-headless-session@<user> + the
 # user's gnome-remote-desktop-headless on a distinct loopback port — see entrypoint-grd.
 # Ordered After=gdm.service so the session FACTORY is up before it spawns sessions.
@@ -573,9 +672,13 @@ Requires=mariadb.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Secrets reach this oneshot ONLY via the bind-mounted secrets.env (run.sh / the
-# Quadlet writes it). The dead /run/.containerenv import was removed — it invited
-# the `podman -e` path that leaks secrets to `podman inspect`.
+# Generous start timeout: provisioning serializes up to 5 users (per-user session-bus wait
+# ~40s each) + mariadb first-init + the bounded tailscale retry (~30s) + mariadb-upgrade; the
+# 90s systemd default would SIGTERM it mid-provision and tomcat (Requires=) would never serve :8443.
+TimeoutStartSec=600
+# Secrets reach this oneshot ONLY via the bind-mounted secrets.env (run.sh.grd writes it;
+# grd is run.sh.grd-only — there is NO grd Quadlet). The dead /run/.containerenv import was
+# removed — it invited the `podman -e` path that leaks secrets to `podman inspect`.
 EnvironmentFile=-/etc/fedora-desktop/secrets.env
 ExecStart=/usr/local/bin/entrypoint-grd.sh
 [Install]
@@ -592,5 +695,10 @@ printf 'gnome-wayland\n' > /etc/fedora-desktop/xsession
 
 # (machine-id is handled by systemd-machine-id-setup at boot — no dbus-uuidgen here.)
 $DNF clean all
-rm -rf /var/cache/dnf /var/cache/libdnf5
-echo ">>> fedora-desktop-grd installed: GNOME-50 Wayland + GRD(RDP+VNC) + Guacamole web + apps (systemd-PID-1, headless)"
+rm -rf /var/cache/dnf
+# /var/cache/libdnf5 is bind-mounted as the PERSISTENT dnf package cache during throwaway /
+# host live-gate builds (Principle 10 / FLEET churn discipline); rmdir of that mountpoint fails
+# EBUSY and kills the build. Remove the dir only when it is NOT a mountpoint (the monthly
+# --no-cache CI build, where it is a real in-layer dir we want gone to keep the layer small).
+mountpoint -q /var/cache/libdnf5 || rm -rf /var/cache/libdnf5
+echo ">>> fedora-desktop-grd installed: GNOME-50 Wayland + GRD(RDP; VNC follow-up) + Guacamole web + apps (systemd-PID-1, headless)"

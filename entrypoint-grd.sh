@@ -28,26 +28,51 @@ RDP_BASE_PORT=3389            # core=:3389, USER1=:3390, … (loopback; Guacamol
 # core (uid 1000) is the admin. USER{1..5} are non-privileged desktop users created
 # idempotently from spin-up secrets (NOT in wheel, no subuid → no podman/claudebox).
 echo "core:${RDP_PW}" | chpasswd
+# Seed /etc/skel into core's home if a fresh bound /home/core volume left it empty (useradd never ran
+# for core — uid 1000 is baked at build). Re-chown so the copied dotfiles aren't root-owned. Parity xrdp.
+[ -e /home/core/.bashrc ] || { cp -rT /etc/skel /home/core 2>/dev/null || true; chown -R core:core /home/core 2>/dev/null || true; }
+# Admin-home isolation: re-assert 0700 on core's home every boot (BINDING — CLAUDE.md "every
+# home is 0700 incl core's; both lineages identically"). On a multi-user box this keeps core's
+# vault / gh+OAuth / 1Password creds unreadable by uid-1001+ workers. Parity xrdp entrypoint.sh.
+chmod 700 /home/core 2>/dev/null || true
 # Parallel arrays. uid + port are keyed on the USERn NUMBER (1000+n / base+n), NOT the
 # array index, so they MATCH guac-db-provision's per-user port even with gaps (e.g.
 # USER1 + USER3 set, no USER2). core is index 0: uid 1000, port RDP_BASE_PORT.
 USERNAMES=(core); USERPWS=("$RDP_PW"); USERUIDS=(1000); USERPORTS=("$RDP_BASE_PORT")
 for _n in 1 2 3 4 5; do
     eval "_un=\${USER${_n}_NAME:-}; _up=\${USER${_n}_PW:-}"
-    [ -n "$_un" ] && [ -n "$_up" ] || continue
-    case "$_un" in core|root|gdm|gnome-remote-desktop|tomcat|mysql) echo "[grd] refusing reserved username '$_un'" >&2; continue;; esac
-    echo "$_un" | grep -qE '^[a-z_][a-z0-9_-]{0,30}$' || { echo "[grd] invalid username '$_un' — skipped" >&2; continue; }
+    # UNSET on every reject path: the SHARED provisioner (guac-db-provision.sh) reads the RAW
+    # USERn_NAME/_PW env, so a rejected user left set would still get a PHANTOM web login. Parity xrdp.
+    [ -n "$_un" ] && [ -n "$_up" ] || { eval "unset USER${_n}_NAME USER${_n}_PW"; continue; }
+    case "$_un" in core|root|gdm|gnome-remote-desktop|tomcat|mysql|daemon|bin|sys|nobody) echo "[grd] refusing reserved username '$_un'" >&2; eval "unset USER${_n}_NAME USER${_n}_PW"; continue;; esac
+    echo "$_un" | grep -qE '^[a-z_][a-z0-9_-]{0,30}$' || { echo "[grd] invalid username '$_un' — skipped" >&2; eval "unset USER${_n}_NAME USER${_n}_PW"; continue; }
+    # Never reset a SYSTEM account's password: refuse any pre-existing name resolving to uid<1000
+    # (the reserved-name list above can't enumerate every distro/package system user).
+    if id "$_un" >/dev/null 2>&1 && [ "$(id -u "$_un")" -lt 1000 ]; then
+        echo "[grd] refusing system account '$_un' (uid<1000)" >&2; eval "unset USER${_n}_NAME USER${_n}_PW"; continue
+    fi
     if ! id "$_un" >/dev/null 2>&1; then
         # Pin a per-user private group at GID 8000+n (RESERVED range, NOT 1000+n — the 1Password
         # packages bake groups at gid 1001/1002/1003) + UID 1000+n so the PERSISTED /home/<user>
         # volume's ownership is deterministic across recreations. Parity with the xrdp lineage.
         groupadd -g "$((8000 + _n))" "$_un" 2>/dev/null || true
-        useradd -m -u "$((1000 + _n))" -g "$((8000 + _n))" -s /bin/bash "$_un"
-        # Own the BOUND per-user /home volume (root-owned mount; useradd -m won't chown a pre-existing
-        # mountpoint). NUMERIC chown — never resolve a group name. grd was missing this entirely. 0700.
-        chown -R "$((1000 + _n)):$((8000 + _n))" "/home/$_un" 2>/dev/null || true
+        # GUARD useradd under set -eu: one failure must NOT abort the whole oneshot — extra users are
+        # non-fatal (core + the other users still serve). Parity with the xrdp lineage.
+        if useradd -m -u "$((1000 + _n))" -g "$((8000 + _n))" -s /bin/bash "$_un"; then
+            # Own the BOUND per-user /home volume (root-owned mount; useradd -m won't chown a pre-existing
+            # mountpoint). NUMERIC chown — never resolve a group name. grd was missing this entirely. 0700.
+            chown -R "$((1000 + _n)):$((8000 + _n))" "/home/$_un" 2>/dev/null || true
+            # useradd -m SKIPS a pre-existing bind-mount mountpoint, leaving an empty home — seed skel,
+            # then re-chown numeric so the copied dotfiles aren't root-owned. Parity with the xrdp lineage.
+            [ -e "/home/$_un/.bashrc" ] || cp -rT /etc/skel "/home/$_un" 2>/dev/null || true
+            chown -R "$((1000 + _n)):$((8000 + _n))" "/home/$_un" 2>/dev/null || true
+        else
+            echo "[grd] useradd '$_un' failed — skipping" >&2; eval "unset USER${_n}_NAME USER${_n}_PW"; continue
+        fi
     fi
-    echo "${_un}:${_up}" | chpasswd
+    # chpasswd non-fatal for EXTRA users (set -eu) — honor the "extra users non-fatal" contract.
+    echo "${_un}:${_up}" | chpasswd || { echo "[grd] chpasswd '$_un' failed — skipping" >&2; eval "unset USER${_n}_NAME USER${_n}_PW"; continue; }
+    gpasswd -d "$_un" wheel >/dev/null 2>&1 || true   # defensive: NEVER wheel (idempotent, parity with xrdp)
     chmod 700 "/home/$_un" 2>/dev/null || true   # 0700 per-user isolation (idempotent, parity with xrdp)
     loginctl enable-linger "$_un" >/dev/null 2>&1 || true
     USERNAMES+=("$_un"); USERPWS+=("$_up"); USERUIDS+=("$((1000 + _n))"); USERPORTS+=("$((RDP_BASE_PORT + _n))")
@@ -89,31 +114,31 @@ for _i in $(seq 1 30); do
     sleep 1
 done
 if [ -n "${TS_AUTHKEY:-}" ]; then
-    tailscale up --ssh --auth-key="${TS_AUTHKEY}" --hostname=fedora-desktop-grd \
-        || echo "[tailscale] up failed (bad/expired TS_AUTHKEY?) — fleet tiles + tailnet RDP stay unreachable until 'tailscale up' succeeds" >&2
+    # BOUNDED 6×5s retry (~30s cap) — NOT xrdp's unbounded `until`: tomcat.service Requires= this
+    # oneshot, so an unbounded loop on a bad key would deadlock the public web door forever.
+    _ts_ok=0
+    for _t in 1 2 3 4 5 6; do
+        tailscale up --ssh --auth-key="${TS_AUTHKEY}" --hostname=fedora-desktop-grd && { _ts_ok=1; break; }
+        echo "[tailscale] up attempt $_t failed, retrying 5s" >&2; sleep 5
+    done
+    [ "$_ts_ok" = 1 ] || echo "[tailscale] up failed after retries (bad/expired TS_AUTHKEY?) — fleet tiles + tailnet RDP stay unreachable until 'tailscale up' succeeds" >&2
 else
+    # No key: kick the interactive web-login in the BACKGROUND (so this oneshot + tomcat don't block
+    # on a browser). SINGLE attempt — keyless `tailscale up` BLOCKS until the operator completes the
+    # login URL, so there is nothing to retry (and `| sed` masks its exit anyway: no pipefail set).
     ( tailscale up --ssh --hostname=fedora-desktop-grd 2>&1 | sed 's/^/[tailscale] /' ) &
     echo "[tailscale] no TS_AUTHKEY — open the login.tailscale.com URL in the journal to join (one-time per state volume)" >&2
 fi
 
 # ---- tailnet-only by CONSTRUCTION (defense-in-depth; parity with the xrdp lineage) --
-# The web gateway (:8443) is the ONLY public door. ssh (:22), mosh, and EVERY GRD RDP
-# port (:3389-:3394, one per user) are TAILNET-ONLY: run.sh.grd publishes only the web
-# port, and this nft rule drops those ports on every interface except lo + tailscale0.
-nft -f - <<'NFT' 2>/dev/null || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)"
-table inet fd_tailnet_guard {
-  chain input {
-    type filter hook input priority -10; policy accept;
-    iifname "lo" accept
-    iifname "tailscale0" accept
-    tcp dport { 22, 3389-3394, 5900 } drop
-    udp dport 61001-62000 drop
-  }
-}
-NFT
+# The nft tailnet-guard (drops ssh/mosh/RDP/VNC on every iface but lo + tailscale0) now
+# lives in the always-on fedora-desktop-grd-netguard.service oneshot (ordered Before
+# sshd/tailscaled, with NO Requires=mariadb — see install-grd.sh), so the tailnet-only
+# boundary holds even if THIS DB-gated firstboot oneshot never runs. Moved out of here
+# to honor the xrdp-parity "guard present whenever a listener is" invariant.
 
 # ---- Tomcat TLS keystore for the public :8443 web door ----------------------
-install -d -m 0751 "$CERTDIR"
+install -d -m 0750 -o tomcat -g tomcat "$CERTDIR"   # tomcat must own+traverse to read keystore.p12 on a FRESH /var/lib/guac-cert volume (parity xrdp)
 if [ ! -f "$CERTDIR/keystore.p12" ]; then
     keytool -genkeypair -alias guac -keyalg RSA -keysize 2048 -validity 3650 \
         -dname "CN=fedora-desktop-grd" -storetype PKCS12 \
@@ -139,6 +164,12 @@ for _i in $(seq 1 60); do
     sleep 1
 done
 [ "$_db_ready" = 1 ] || { echo "FATAL: MariaDB (mariadb.service) not ready for provisioning" >&2; exit 1; }
+# Cross-version datadir self-heal: a monthly --no-cache base rebuild can land a NEWER MariaDB on an
+# EXISTING /var/lib/mysql volume whose system tables then need upgrading. Run it idempotently here
+# (self-skips when already current, keyed on mysql_upgrade_info) BEFORE provisioning. NON-FATAL — a
+# failed/again-current upgrade must never block the web door. Parity with the xrdp lineage.
+MUPGRADE="$(command -v mariadb-upgrade || command -v mysql_upgrade || echo '')"
+[ -n "$MUPGRADE" ] && "$MUPGRADE" --socket="$DBSOCK" >/var/log/mariadb-upgrade.log 2>&1 || true
 RDP_SECURITY=any
 RDP_PIN_BPP=0
 RDP_PORT_PER_USER=1
@@ -217,13 +248,20 @@ for _i in "${!USERNAMES[@]}"; do
     wait_user_bus "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" \
         || echo "[grd] ${USERNAMES[$_i]}: session bus /run/user/${USERUIDS[$_i]}/bus never appeared — grdctl config may not persist" >&2
 done
-# Pass 2: configure GRD per user. Track CORE (index 0) specifically.
+# Pass 2: configure GRD per user. Track CORE (index 0) specifically; for ADDITIONAL users drop a
+# per-port readiness marker under /run/fedora-desktop-grd keyed on the per-user RDP port (3389+n).
+# Consumer: an operator/diagnostic probe today (`podman exec <c> ls /run/fedora-desktop-grd`); the
+# container healthcheck does NOT yet read it — wiring the multi-port probe into run.sh.grd is the
+# follow-up CONTROL-PLANE PR (run.sh.grd is control-plane, shipped standalone). Extra users NON-FATAL.
+mkdir -p /run/fedora-desktop-grd 2>/dev/null || true
 _core_grd_ok=0
 for _i in "${!USERNAMES[@]}"; do
-    if configure_grd_user "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" "${USERPORTS[$_i]}" "${USERPWS[$_i]}"; then
-        if [ "$_i" = 0 ]; then _core_grd_ok=1; fi   # explicit (set -e-safe + unambiguous)
+    _port="${USERPORTS[$_i]}"
+    if configure_grd_user "${USERNAMES[$_i]}" "${USERUIDS[$_i]}" "$_port" "${USERPWS[$_i]}"; then
+        if [ "$_i" = 0 ]; then _core_grd_ok=1; else touch "/run/fedora-desktop-grd/user-$_port.ready" 2>/dev/null || true; fi
     else
         echo "[grd] ${USERNAMES[$_i]}: GRD headless RDP did NOT enable (see [grd] lines above)" >&2
+        [ "$_i" = 0 ] || rm -f "/run/fedora-desktop-grd/user-$_port.ready"   # absent marker => probe sees a dead port
     fi
 done
 # FAIL CLOSED on core: a dead core desktop must NOT be served behind a green box. tomcat.service

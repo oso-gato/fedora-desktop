@@ -74,6 +74,11 @@ emit_fleet_connections_sql() {
 # grants + fleet-grant RECONCILIATION (DELETE-then-INSERT, must-do #3).
 emit_user_sql() {  # <username> <web_pw> <rdp_user> <rdp_pw> <access> <desktop_conn_name> [<rdp_port>]
     _u="$1"; _wpw="$2"; _ru="$3"; _rpw="$4"; _acc="$5"; _conn="$6"; _rport="${7:-3389}"
+    # Sanitize the fleet-access grant to [A-Za-z0-9._,-] (drop spaces/garbage so " onyx" can't
+    # diverge from "onyx"); empty after stripping -> none (fail-safe). Single-source: normalizes the
+    # none short-circuit + the exact-whole-token match below for BOTH lineages, even if an entrypoint
+    # passes it un-normalized. Keeps exact-whole-token, fail-closed matching intact.
+    _acc="$(printf '%s' "$_acc" | tr -cd 'A-Za-z0-9._,-')"; [ -n "$_acc" ] || _acc=none
 cat <<SQL
 INSERT IGNORE INTO guacamole_entity (name, type) VALUES ($(sqlstr "$_u"), 'USER');
 SET @eid = (SELECT entity_id FROM guacamole_entity WHERE name=$(sqlstr "$_u") AND type='USER');

@@ -725,4 +725,9 @@ EOF
 
 dbus-uuidgen --ensure
 dnf clean all
-rm -rf /var/cache/dnf /var/cache/libdnf5
+rm -rf /var/cache/dnf
+# /var/cache/libdnf5 is bind-mounted as the PERSISTENT dnf package cache during throwaway /
+# host live-gate builds (Principle 10 / FLEET churn discipline); rmdir of that mountpoint fails
+# EBUSY and kills the build. Remove the dir only when it is NOT a mountpoint (the monthly
+# --no-cache CI build, where it is a real in-layer dir we want gone to keep the layer small).
+mountpoint -q /var/cache/libdnf5 || rm -rf /var/cache/libdnf5
