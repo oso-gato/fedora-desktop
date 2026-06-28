@@ -1,9 +1,12 @@
 # fedora-desktop .live-gate — the workload-shipped, self-describing live-gate spec.
 # ============================================================================
-# SOURCED AS SHELL ENV by the host's model-C live-gate (validate-candidate.sh via
-# build-candidate.sh / live-gate-run.sh: `set -a; . .live-gate; set +a`). Shipping the
-# spec IN the repo (vs the host's ~/.config/live-gate/<wl>.env fallback) lets it AUTO-TRACK
-# the run-contract on the same PR that changes it — the gate validates the candidate exactly
+# PARSED — NEVER SOURCED — by the host's model-C live-gate (live-gate-run.sh's lg_load reads this
+# file line by line and assigns each KEY=VALUE with `printf -v`; it NEVER `.`/`source`s it, since
+# this file travels in the UNTRUSTED PR head). Declare INERT KEY=VALUE pairs ONLY: one assignment
+# per line, schema keys only, and NO cross-variable references ($OTHER) — inline each value. Single-
+# quote any HEALTH/PROBE command (its $()/`` run later INSIDE the fenced candidate, never on the host).
+# Shipping the spec IN the repo (vs the host's ~/.config/live-gate/<wl>.env fallback) lets it AUTO-
+# TRACK the run-contract on the same PR that changes it — the gate validates the candidate exactly
 # as run.sh / run.sh.grd would run it, MINUS the public publish + the real secrets.
 #
 # fedora-desktop ships TWO LINEAGES in one repo (see CLAUDE.md "THE TWO LINEAGES"). They share
@@ -15,7 +18,7 @@
 # probes EACH target independently. (This supersedes the single-env + baked-lineage-marker preset
 # the host shipped as a fallback; here the .live-gate declares both targets explicitly.)
 #
-# ---- SCHEMA (multi-target, sourced env; consumed by the model-C gate) ----------------------
+# ---- SCHEMA (multi-target, PARSED contract — not sourced; consumed by the model-C gate) -------
 #   LIVE_GATE_TARGETS  space-separated list of target names the gate iterates. For each name <T>,
 #                      the gate reads these SUFFIX-form CFG_<T> vars via indirect expansion — the
 #                      host consumer uses `pt(){ local v="${1}_${2}"; printf '%s' "${!v:-$3}"; }`,
@@ -40,15 +43,11 @@
 
 LIVE_GATE_TARGETS="xrdp grd"
 
-# Shared across BOTH lineages (single source of truth — they front the SAME Guacamole web gate on
-# :8443 over the SAME loopback RDP :3389, and BOTH consume /etc/fedora-desktop/secrets.env: xrdp
-# sources it, grd's firstboot oneshot reads it via EnvironmentFile). Single-quoted so the inner
-# $(...) / "%{http_code}" reach --health-cmd / podman-exec LITERALLY (no source-time expansion).
-_GD_HEALTH='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'
-_GD_PROBE='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && timeout 6 bash -c "exec 3<>/dev/tcp/127.0.0.1/3389"'
-_GD_SECRET_MOUNT='/etc/fedora-desktop/secrets.env'
-_GD_SECRET_ENV='RDP_PW=gate-scratch-rdp-not-a-real-secret
-GUAC_PW=gate-scratch-guac-not-a-real-secret'
+# Shared across BOTH lineages BY VALUE — the gate PARSES this contract (no cross-variable refs), so
+# each target inlines its own literal below. They front the SAME Guacamole web gate on :8443 over the
+# SAME loopback RDP :3389, and BOTH consume /etc/fedora-desktop/secrets.env (xrdp sources it, grd's
+# firstboot oneshot EnvironmentFile-reads it). HEALTH/PROBE are SINGLE-QUOTED so the inner $(...) /
+# "%{http_code}" reach --health-cmd / podman-exec LITERALLY and run only inside the fenced candidate.
 
 # ---- target: xrdp (Containerfile) — supervised-bash PID 1; XFCE-on-X11 + xrdp -----------------
 # FENCE = run.sh's podman-run flags MINUS `-p ${WEB_PORT}:8443` and MINUS the bind-mounted real
@@ -57,10 +56,11 @@ GUAC_PW=gate-scratch-guac-not-a-real-secret'
 # HEALTH mirrors run.sh's --health-cmd. Scratch RDP_PW/GUAC_PW via the bind-mounted secrets.env.
 CFILE_xrdp='Containerfile'
 FENCE_xrdp='--shm-size=1g --cap-add NET_ADMIN --cap-add SYS_ADMIN --device /dev/net/tun --device /dev/fuse --security-opt label=disable'
-HEALTH_xrdp="$_GD_HEALTH"
-PROBE_xrdp="$_GD_PROBE"
-SECRET_MOUNT_xrdp="$_GD_SECRET_MOUNT"
-SECRET_ENV_xrdp="$_GD_SECRET_ENV"
+HEALTH_xrdp='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'
+PROBE_xrdp='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && timeout 6 bash -c "exec 3<>/dev/tcp/127.0.0.1/3389"'
+SECRET_MOUNT_xrdp='/etc/fedora-desktop/secrets.env'
+SECRET_ENV_xrdp='RDP_PW=gate-scratch-rdp-not-a-real-secret
+GUAC_PW=gate-scratch-guac-not-a-real-secret'
 
 # ---- target: grd (Containerfile.grd) — systemd-PID-1; GNOME-Wayland + GRD ----------------------
 # FENCE = run.sh.grd's flags MINUS `-p ${WEB_PORT}:8443` and MINUS real secrets/volumes, PLUS the
@@ -70,10 +70,11 @@ SECRET_ENV_xrdp="$_GD_SECRET_ENV"
 # bind-mounted secrets.env — NEVER baked (grd's firstboot oneshot EnvironmentFile-reads it).
 CFILE_grd='Containerfile.grd'
 FENCE_grd='--systemd=always --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --shm-size=1g --cap-add NET_ADMIN --cap-add SYS_ADMIN --device /dev/net/tun --device /dev/fuse --security-opt label=disable'
-HEALTH_grd="$_GD_HEALTH"
-PROBE_grd="$_GD_PROBE"
-SECRET_MOUNT_grd="$_GD_SECRET_MOUNT"
-SECRET_ENV_grd="$_GD_SECRET_ENV"
+HEALTH_grd='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'
+PROBE_grd='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && timeout 6 bash -c "exec 3<>/dev/tcp/127.0.0.1/3389"'
+SECRET_MOUNT_grd='/etc/fedora-desktop/secrets.env'
+SECRET_ENV_grd='RDP_PW=gate-scratch-rdp-not-a-real-secret
+GUAC_PW=gate-scratch-guac-not-a-real-secret'
 
 # ---- gate-imposed resource caps + first-boot health budget (shared by both targets) ------------
 CAND_MEMORY='4g'
