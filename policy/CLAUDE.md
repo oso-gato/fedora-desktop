@@ -318,7 +318,7 @@ managed-settings deny is friction; the BOUNDARY is push-scope + the promotion-ga
 - `$HOME` = home volume; persists across box rebuilds AND container recreations.
 - Nested rootless podman via `CONTAINER_HOST`; **SELinux DISABLED for this container by design**
   (nested podman + fuse-overlayfs + `/dev/fuse`); HOST stays enforcing — don't "harden" away.
-- claude-code refreshes DAILY from Anthropic's `latest` channel; the desktop image monthly.
+- claude-code refreshes DAILY from Anthropic's `latest` channel; the desktop image monthly. It is a package-managed dnf RPM at `/usr/bin/claude` and updates ONLY via the box rebuild — its in-place self-update is **LOCKED OFF** (`DISABLE_UPDATES`/`DISABLE_AUTOUPDATER` set policy-tier in `managed-settings.json` + in `/etc/profile.d/20-claude-no-selfupdate.sh` by `claudebox-init.sh`, which also self-heals any native-build shadow off the home volume). Do NOT run `claude install`/`claude update` to change the version (intentional no-op) — a native build would plant `~/.local/bin/claude`, shadow the RPM on the persistent home volume, and survive every rebuild. To get newer claude-code, run `claudebox-rebuild`. (Ported from fedora-dev #45.)
 - Desktop (XFCE/RDP/VNC/web) is the substrate; Obsidian + VS Code + Firefox + **1Password
   (GUI + CLI)** are the interfaces; claude-code (this box) is reached from a desktop terminal
   via `claude`.
