@@ -21,146 +21,29 @@ on:
 permissions:
   contents: read
   packages: write
-  pull-requests: read
   id-token: write  # OIDC for cosign keyless signing
+
+# ============================================================================
+# CONTROL-PLANE CONVERGENCE: the former `control-plane-guard` job (the CI
+# `control-plane-approved` label-gate that FAILED any guardrail-touching PR
+# without a hand-applied waiver label) was REMOVED to match fedora-dev /
+# fedora-bootstrap. In a single-operator fleet the in-session refspec-aware
+# `gate-push.sh` hook + the require-PR ruleset on `main` + Arthur's clickable
+# merge already gate every change; a CI label-gate was a second manual step for
+# the same operator — redundant friction, not added safety. The control-plane
+# CLASS discipline (standalone, single-purpose, flagged-in-TLDR PRs) stays — it
+# is a review convention, not a CI job. The no-loose-binary backstop below
+# (Principle 2c provenance) is BUILD HYGIENE, not a merge-gate, and is retained.
+# ============================================================================
 
 jobs:
   # ==========================================================================
-  # CONTROL-PLANE DIFF-GUARD (per policy/CLAUDE.md "THE PROMOTION GATE").
-  #
-  # The promotion gate's MECHANICAL enforcement lives in the box (the managed
-  # PreToolUse hook + managed-settings). This job is the CI-side backstop: it
-  # FAILS any PR that touches a guardrail / control-plane file UNLESS the PR
-  # carries an explicit waiver label (`control-plane-approved`). It makes a
-  # control-plane change impossible to land silently — a reviewer must (a) see
-  # it isolated and (b) apply the label by hand. Mirrors the law's rule that
-  # control-plane/guardrail changes are STANDALONE, single-purpose, never
-  # bundled, and only land on explicit approval.
-  #
-  # Runs only on pull_request (a push to main has already passed review +
-  # carried the label, or is the maintainer's own self-deploy promotion).
-  # ==========================================================================
-  control-plane-guard:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect control-plane / guardrail changes
-        id: detect
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          # Guardrail / control-plane file globs — the exact classes the law
-          # names: policy, managed-settings, the promotion-gate hook, every
-          # Quadlet, CI itself, the key-sync helper, run.sh, and the box-rebuild
-          # control machinery. A diff touching ANY of these is "control-plane".
-          PATTERNS='
-          ^policy/
-          ^.github/workflows/
-          (^|/)managed-settings\.json$
-          (^|/).*\.container$
-          (^|/)run\.sh(\.[a-z0-9]+)?$
-          (^|/)sync-authorized-keys\.sh$
-          (^|/)gate-push\.sh$
-          (^|/)box-rebuild\.sh$
-          (^|/)claudebox-(assemble|init|daily)\.sh$
-          ^bin/(claude|claudebox-rebuild)$
-          (^|/).*sudoers.*$
-          '
-          # Build a single ERE from the non-empty lines.
-          ERE=$(printf '%s\n' "$PATTERNS" | sed '/^[[:space:]]*$/d' | paste -sd'|' -)
-          echo "Using control-plane ERE: $ERE"
-
-          # Self-test: the ERE MUST match every control-plane path the law names.
-          # Guards against a future anchor/typo regression (this is the bug that let
-          # run.sh.grd slip through). A miss here FAILS the build, not silently passes.
-          for p in run.sh run.sh.grd fedora-desktop.container \
-                   policy/hooks/gate-push.sh policy/managed-settings.json policy/CLAUDE.md \
-                   .github/workflows/build.yml sync-authorized-keys.sh \
-                   box-rebuild.sh claudebox-assemble.sh claudebox-init.sh claudebox-daily.sh \
-                   bin/claude bin/claudebox-rebuild policy/sudoers.claudebox; do
-            printf '%s\n' "$p" | grep -Eq "$ERE" \
-              || { echo "::error title=Diff-guard ERE self-test failed::pattern set no longer matches control-plane path '$p'"; exit 1; }
-          done
-          echo "control-plane ERE self-test passed (all named guardrail paths match)"
-
-          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-          echo "Changed files in this PR:"
-          echo "$CHANGED"
-
-          HITS=$(printf '%s\n' "$CHANGED" | grep -E "$ERE" || true)
-          if [ -n "$HITS" ]; then
-            echo "touched=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "files<<EOF"
-              echo "$HITS"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Enforce the waiver label on control-plane changes
-        if: steps.detect.outputs.touched == 'true'
-        env:
-          # Evaluated at workflow trigger time against the PR's labels array.
-          # `contains(array, item)` is an exact element match — robust against
-          # label names with spaces/punctuation (no string-split needed).
-          HAS_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'control-plane-approved') }}
-        run: |
-          set -euo pipefail
-          echo "::group::Control-plane / guardrail files touched by this PR"
-          cat <<'FILES'
-          ${{ steps.detect.outputs.files }}
-          FILES
-          echo "::endgroup::"
-
-          if [ "$HAS_WAIVER" = "true" ]; then
-            echo "Waiver label 'control-plane-approved' present — control-plane change is explicitly approved."
-            exit 0
-          fi
-
-          echo "::error title=Control-plane change without waiver::This PR edits guardrail / control-plane files (listed above) but does NOT carry the 'control-plane-approved' label."
-          cat <<'MSG'
-
-          ────────────────────────────────────────────────────────────────────
-          CONTROL-PLANE GUARD FAILED
-
-          This PR touches a guardrail / control-plane file (policy/**,
-          managed-settings.json, .github/workflows/**, a *.container Quadlet,
-          run.sh, sync-authorized-keys.sh, the promotion-gate hook, or the
-          box-rebuild control machinery).
-
-          Per policy/CLAUDE.md "THE PROMOTION GATE", such a change MUST be:
-            * STANDALONE and single-purpose (never bundled with a feature change),
-            * explicitly approved by the maintainer.
-
-          To land it: a maintainer reviews the isolated diff and applies the
-          'control-plane-approved' label, then re-runs this check. The label is
-          the deliberate, human, per-PR waiver — there is no auto-bypass.
-          ────────────────────────────────────────────────────────────────────
-          MSG
-          exit 1
-
-  # ==========================================================================
   # BUILD + COSIGN-SIGN + PUSH to ghcr.io/oso-gato/fedora-desktop.
   #
-  # On pull_request: BUILD-ONLY validation (push: false, no registry write) and
-  # gated behind the control-plane-guard so a guardrail PR can't even build
-  # without its waiver. On push to main / cron / dispatch: build, push, sign.
+  # On pull_request: BUILD-ONLY validation (push: false, no registry write).
+  # On push to main / cron / dispatch: build, push, sign.
   # ==========================================================================
   build:
-    needs: control-plane-guard
-    # `needs` would skip this job if control-plane-guard is skipped (it only
-    # runs on pull_request). always() + an explicit success/skip check keeps the
-    # push/cron/dispatch paths building while still blocking on a FAILED guard.
-    if: always() && (needs.control-plane-guard.result == 'success' || needs.control-plane-guard.result == 'skipped')
     runs-on: ubuntu-latest
     # MATRIX — build + publish each LINEAGE. fail-fast:false so one variant failing
     # NEVER blocks the other from publishing. xrdp is the PROVEN lineage (:xrdp = :latest);
