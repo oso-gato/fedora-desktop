@@ -51,30 +51,37 @@ LIVE_GATE_TARGETS="xrdp grd"
 
 # ---- target: xrdp (Containerfile) — supervised-bash PID 1; XFCE-on-X11 + xrdp -----------------
 # FENCE = run.sh's podman-run flags MINUS `-p ${WEB_PORT}:8443` and MINUS the bind-mounted real
-# secrets / persisted volumes (caps + devices + label-disable only). PROBE: the PUBLIC web door
-# answers /guacamole/ 200 on the candidate's own loopback AND the loopback RDP :3389 is open.
+# secrets / persisted volumes (caps + devices + label-disable only). PROBE: the DEEP equivalence
+# probe (bin/gate-deep-probe.sh, shipped via `COPY bin/`) — beyond web/RDP/DB it asserts the desktop
+# SESSION is rendering (xrdp: live Xorg :10) + RDP-server config (bpp=24, Xorg backend, resume) +
+# the Guacamole auth chain (jdbc/totp extensions + the core DB identity). HEALTH still gates basics.
 # HEALTH mirrors run.sh's --health-cmd. Scratch RDP_PW/GUAC_PW via the bind-mounted secrets.env.
 CFILE_xrdp='Containerfile'
 FENCE_xrdp='--shm-size=1g --cap-add NET_ADMIN --cap-add SYS_ADMIN --device /dev/net/tun --device /dev/fuse --security-opt label=disable'
 HEALTH_xrdp='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'
-PROBE_xrdp='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && timeout 6 bash -c "exec 3<>/dev/tcp/127.0.0.1/3389"'
+PROBE_xrdp='bash /usr/local/share/fedora-dev/bin/gate-deep-probe.sh xrdp'
 SECRET_MOUNT_xrdp='/etc/fedora-desktop/secrets.env'
 SECRET_ENV_xrdp='RDP_PW=gate-scratch-rdp-not-a-real-secret
-GUAC_PW=gate-scratch-guac-not-a-real-secret'
+GUAC_PW=gate-scratch-guac-not-a-real-secret
+USER1_NAME=gateuser1
+USER1_PW=gate-scratch-user1-not-a-real-secret'
 
 # ---- target: grd (Containerfile.grd) — systemd-PID-1; GNOME-Wayland + GRD ----------------------
 # FENCE = run.sh.grd's flags MINUS `-p ${WEB_PORT}:8443` and MINUS real secrets/volumes, PLUS the
 # systemd-PID-1 contract (--systemd=always --cgroupns=host -v /sys/fs/cgroup:rw --device /dev/fuse)
-# so a systemd-PID-1 candidate can ACTUALLY BOOT for the gate. SAME /guacamole/ 200 + RDP :3389
-# probe + health as xrdp (same web gate, same loopback RDP). Scratch RDP_PW/GUAC_PW via the
+# so a systemd-PID-1 candidate can ACTUALLY BOOT for the gate. SAME HEALTH as xrdp; PROBE is the SAME
+# deep equivalence probe (grd branch: GDM headless session active + compositor running + GRD is the
+# :3389 listener + mutter paint signature). Scratch RDP_PW/GUAC_PW via the
 # bind-mounted secrets.env — NEVER baked (grd's firstboot oneshot EnvironmentFile-reads it).
 CFILE_grd='Containerfile.grd'
 FENCE_grd='--systemd=always --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --shm-size=1g --cap-add NET_ADMIN --cap-add SYS_ADMIN --device /dev/net/tun --device /dev/fuse --security-opt label=disable'
 HEALTH_grd='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'
-PROBE_grd='[ "$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/guacamole/)" = 200 ] && timeout 6 bash -c "exec 3<>/dev/tcp/127.0.0.1/3389"'
+PROBE_grd='bash /usr/local/share/fedora-dev/bin/gate-deep-probe.sh grd'
 SECRET_MOUNT_grd='/etc/fedora-desktop/secrets.env'
 SECRET_ENV_grd='RDP_PW=gate-scratch-rdp-not-a-real-secret
-GUAC_PW=gate-scratch-guac-not-a-real-secret'
+GUAC_PW=gate-scratch-guac-not-a-real-secret
+USER1_NAME=gateuser1
+USER1_PW=gate-scratch-user1-not-a-real-secret'
 
 # ---- gate-imposed resource caps + first-boot health budget (shared by both targets) ------------
 CAND_MEMORY='4g'
