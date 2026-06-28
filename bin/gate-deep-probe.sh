@@ -80,6 +80,33 @@ case "$LIN" in
   *) bad "unknown lineage '$LIN' (want xrdp|grd)" "lineage" ;;
 esac
 
+# ---- multi-user: a 2nd user (USER1=gateuser1) provisioned via the gate's scratch SECRET_ENV -------
+# The key grd<->xrdp structural difference: grd spawns each user's headless GNOME session at BOOT and
+# binds a per-user loopback RDP port (core :3389, USERn :3389+n) — so it IS gate-checkable. xrdp spawns
+# a user's X session at LOGIN (sesman, shared :3389), and the gate performs no RDP login, so a live 2nd
+# xrdp session is NOT gate-observable without an RDP client (operator-run); we assert account + tile only.
+EXTRA_USER=gateuser1
+if id "$EXTRA_USER" >/dev/null 2>&1; then
+  pass "multi-user: extra user '$EXTRA_USER' provisioned (OS account)"
+  ne="$(sql "SELECT COUNT(*) FROM guacamole_entity WHERE name='$EXTRA_USER' AND type='USER';")"
+  [ "${ne:-0}" -ge 1 ] 2>/dev/null && pass "multi-user: '$EXTRA_USER' has its own Guacamole DB identity/tile" || bad "multi-user: '$EXTRA_USER' missing Guacamole DB identity (n=${ne:-?})" "mu-db"
+  case "$LIN" in
+    grd)
+      sa1="$(systemctl is-active 'gnome-headless-session@gateuser1.service' 2>/dev/null || true)"
+      [ "$sa1" = active ] && pass "grd multi-user: gnome-headless-session@$EXTRA_USER active (per-user headless session)" \
+        || bad "grd multi-user: gnome-headless-session@$EXTRA_USER not active (=${sa1:-unknown})" "mu-grd-session"
+      ok=0; for _i in $(seq 1 20); do { [ -e /run/fedora-desktop-grd/user-3390.ready ] || ss -ltnp 2>/dev/null | grep -q ':3390'; } && { ok=1; break; }; sleep 3; done
+      [ "$ok" = 1 ] && pass "grd multi-user: USER1 bound its OWN loopback RDP port :3390 (per-user GRD)" \
+        || bad "grd multi-user: USER1 port :3390 not ready (no /run/fedora-desktop-grd/user-3390.ready, not in ss after 60s)" "mu-grd-port"
+      ;;
+    xrdp)
+      info "xrdp multi-user: per-user X session is login-time (sesman, shared :3389) — not gate-observable without an RDP client; account + Guacamole tile asserted above"
+      ;;
+  esac
+else
+  info "multi-user: no extra user provisioned (single-user run) — multi-user checks skipped"
+fi
+
 [ "$fail" = 0 ] || echo "  SUMMARY: FAILED checks:${FAILED}"
 echo "== deep-probe ($LIN): $([ "$fail" = 0 ] && echo GREEN || echo RED) =="
 exit "$fail"
