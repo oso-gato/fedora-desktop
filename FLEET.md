@@ -30,7 +30,10 @@ a push that could touch `main` (a bare `git push`, a `main`/`HEAD`/`refs/tags/*`
 `--all`/`--mirror`/`--tags`, or any unparseable / quoted / chained target) PLUS the merge verbs
 (`gh pr merge`, `gh pr create --merge|--squash|--rebase|--auto`, `gh api …/merge|/merges`) route to an
 in-session clickable `ask` only Arthur can answer. There is NO approval-marker mechanism (the shipped
-hook uses native `ask`); server-side branch protection on `main` is the PRIMARY backstop.
+hook uses native `ask`/`deny`). A loop-neutral **`require-PR` ruleset** on `main` (no required
+reviews or status checks) is active on all three repos — it forces every change through a PR,
+closing the headless `claude -p` bypass; `main` has no heavy branch protection beyond this thin
+floor (the in-session gate + require-PR + Arthur's click are the whole gate).
 
 **The dev↔host loop.** The dev↔host loop runs autonomously EXCEPT the final merge: develop → open PR
 (feature pushes are autonomous) → label it `live-validate` → the host live-gate (Gate B) DISCOVERS it
