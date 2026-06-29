@@ -77,35 +77,16 @@ depend on a real display, a GPU, or a physical seat is a **defect**, not a featu
 hard prerequisite of the remote-desktop-in-a-container design, never a tunable. (Verify per
 Principle 9 that the image comes up + serves every access path with no display/seat present.)
 
-## PRINCIPLE 0 — THE SELF-SUSTAINING APPARATUS (autonomy mandate + Definition of Done)
+## PRINCIPLE 0 — THE SELF-SUSTAINING APPARATUS
 
-The PRIMARY PURPOSE of the apparatus (`fedora-dev` + `fedora-bootstrap`, inside which this box develops)
-is to keep the human OUT of the loop until genuinely needed. Full text is the law —
-[policy/CLAUDE.md](policy/CLAUDE.md) "THE SELF-SUSTAINING APPARATUS"; the rules that bind a repo edit:
+Autonomy mandate, two-tier validation, and Definition of Done live in `policy/CLAUDE.md` (THE SELF-SUSTAINING APPARATUS section); that law is always in context. This box's role (PR-only, knowledge-work) is in **ROLE** above.
 
-- **Autonomy mandate.** Do MOST of the work + thinking. When there are options, BUILD 2–3, test them
-  through the loop, DISCARD what doesn't fit, and land the right solution YOURSELF — recommend AND
-  self-test your own recommendation; do not shop options to the human. TEAR DOWN and REBUILD to a
-  ZERO-BASE rather than defend a first draft. Presenting an options-decision is RARE.
-- **Engage the human for EXACTLY TWO reasons:** (1) MATERIALLY COMPLETE → needs the clickable APPROVE
-  to merge; (2) MATERIALLY BLOCKED → a genuine roadblock needing a DECISION (not a merge). Status-checks
-  and "which should I do" are NOT reasons.
-- **The PR is the agent's PROOF OF WORK** — develop → open PR → run the loop (GREEN/RED → iterate, RED:
-  fix or SUPERSEDE, GREEN: build upon) until DONE. **Validation is TWO-TIER, NOT every change to the
-  host:** *Tier 1 — IN-BOX (the DEFAULT)* — the dev-box `podman build` IS the throwaway; develop +
-  validate + iterate entirely in the nested engine for everything it CAN build+validate, NO host. *Tier 2
-  — HOST (via the `live-validate` label, ONLY two scenarios)* — (1) the nested engine CANNOT build/run
-  the throwaway (e.g. the systemd-PID-1 GRD lineage) → host throwaway-builds+validates; (2) FINAL
-  pre-production shipment — after all in-box iterations, ticket the host to throwaway-build + prove it
-  LIVE + tear down, THEN present merge.
-- **DEFINITION OF DONE — a change is DONE only when ALL hold:** (1) the FULL objective is materially
-  achieved (not a rabbit-hole ~5% slice); (2) validated through the two-tier loop — in-box build/assembly
-  GREEN is the default proof; the host live-gate verdict GREEN is required for the two Tier-2 scenarios
-  only (nested engine can't validate it, OR final pre-production shipment); (3) adheres to the BUILD
-  PRINCIPLES below — including THROWAWAY TREE & CHURN; (4) a
-  TLDR is written and CRITICALLY SELF-EXAMINED against the work (options considered+discarded, reasoning,
-  fit to BOTH the design + task objective, genuine gaps/forks) — dry-run AS IF the human; if it fails its
-  own scrutiny, return to the loop, do NOT present. Only then does it go to the human (reason #1).
+
+## DOC ARCHITECTURE — DRY rule (binding)
+
+One authoritative home per concept; every other mention is a one-line pointer or deleted. Evidence and benchmarks live only in the principle they prove. Fleet-wide identical blocks are enforced by CI (`bin/fleet-guard-parity.sh`).
+
+**Layer roles.** `policy/CLAUDE.md` = binding law (stamped at every box rebuild; always in context) — owns autonomy mandate, two-tier validation, DoD, merge gate, and control-plane class. `CLAUDE.md` (this file) = per-repo build rules (BUILD PRINCIPLES table) + per-file purpose map. `FLEET.md` = cross-box map (human + agent-accessible); shared sections fleet-wide. `README.md` = human-only; not an authoritative source for any agent rule.
 
 ## BUILD PRINCIPLES (binding for every code change)
 
