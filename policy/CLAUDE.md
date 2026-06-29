@@ -80,60 +80,8 @@ Status-confirmation, option-shopping, and "which should I do" are NOT reasons to
 Only when 1–4 hold does the change go to the human (reason #1: approve-to-merge). The TLDR is the final
 step before the human.
 
-**THROWAWAY TREE & CHURN (build discipline — BINDING for every build, both tiers).**
-- **Use the LIVE tree where possible; bolt a throwaway tree on only for what must DIFFER.** For anything
-  that must differ from the live tree, stand up a SEPARATE, TEMPORARY throwaway tree. That throwaway
-  tree: **(a)** NEVER mutates the IMMUTABLE live tree — the host AND the dev-container base are immutable;
-  the throwaway tree + ALL build caches live on the WRITABLE home volume; **(b)** STILL obeys PROVENANCE
-  (Principle 2 / class a/b/c, GPG-signature / checksum verified) — NO loosening just because it's a
-  throwaway; **(c)** is THROWN AWAY after the build — disposable `localhost/disposable/<name>:val-<sha>`
-  tag, NEVER pushed, `--rm` + `rmi`, and the temp tree removed on teardown.
-- **CHURN BALANCE — persist the dnf PACKAGE CACHE, let everything else be EPHEMERAL (so a 50× iteration
-  does NOT re-download 50×).** The ONE durable input is the dnf PACKAGE CACHE — a plain BIND dir on the
-  home volume, NOT an image layer, so it SURVIVES `rmi` and EVERY disposal (empirically verified in-box) —
-  while the candidate image, its intermediate layers, the temp tree and the run container are all ephemeral
-  by design. Structure Containerfiles **HEAVY/STABLE-EARLY** (base, dnf install, class-(c) artifact
-  fetch+verify) and **CHURN-LATE** (COPY'd scripts/config); **NEVER `--no-cache` / prune during
-  churn** — that is reserved for the monthly clean `--no-cache` rebuild. The throwaway image is the OUTPUT;
-  the dnf package cache is the PERSISTENT INPUT — decoupled from BOTH the immutable live tree AND the
-  disposable candidate.
-- **CHURN MECHANISM — NO re-download across N PRs/iterations (proven in-box). The PR/SHA is NOT the
-  package cache's disposal signal.** Per-PR / per-SHA disposal removes the disposable image
-  (`localhost/disposable/<name>:val-<sha>`) + its temp throwaway tree — and, when that candidate was the
-  sole referrer, its intermediate LAYERS with it — but it NEVER removes the dnf package cache. The
-  package cache is NOT keyed to PR/SHA; it is SHARED across ALL iterations. **ONE persistent thing,
-  everything else ephemeral by design:**
-  - **(1) the persistent dnf PACKAGE CACHE — the ROBUST mechanism**, bind-mounted into the build
-    (`-v <home>/.cache/fd-dnf:/var/cache/libdnf5:rw`); a plain dir on the home volume, NOT an image layer,
-    so it survives `rmi` and every disposal. For churn that changes the dnf install LINE (an add-on PR)
-    the layer DOES re-run, but the RPMs are **SERVED FROM CACHE, not re-downloaded** — PROVEN: a forced
-    dnf re-run downloaded **0 B (vs 9.4 MiB cold), 3.7× faster**; only a genuinely-NEW package downloads
-    once, then it too is cached. (buildah `--mount=type=cache` does NOT work under the dev box's required
-    `--isolation=chroot`, verified — so the bind `-v` package cache IS the mechanism.)
-  - **(2) EPHEMERAL LAYERS — ephemeral BY DESIGN, and that is the ADVANTAGE.** Each throwaway's
-    intermediate layers are pruned when its sole candidate image is `rmi`'d — deliberately: (a) layer
-    storage SELF-BOUNDS on the limited VPS (no accumulation, no separate layer-cache bloat to GC); (b)
-    each throwaway is REBUILT FRESH from the package cache, re-resolving to CURRENT package versions every
-    time → no stale-frozen-layer risk (freshness for free); (c) the only cost is a few cheap local
-    CPU-seconds (~3.6 s warm), never bandwidth (the RPMs are already cached). While a candidate image IS
-    still present (LATE-layer churn, or a kept image) its layer cache also lets the rebuild skip the dnf
-    `RUN` entirely → ZERO work — a free accelerator for as long as that image lives — but nothing depends
-    on layers persisting across disposal.
-- **ISOLATION — no cross-build contamination.** Each build gets its OWN throwaway tree + a UNIQUE
-  disposable tag (`val-<sha>`) + a UNIQUE run container (`vcand-$$`), so concurrent or sequential builds
-  cannot collide. The persistent dnf package cache (and any still-live layer cache) is CONTENT-ADDRESSED (dnf RPM NEVRA +
-  checksum; layer digests), so a shared cache can NEVER serve a wrong version — sharing the cache is safe
-  precisely because the candidates are isolated and the cache is content-keyed.
-- **STORAGE SAFETY (limited VPS quota) — the trio.** **(a)** the disposable image + temp tree
-  SELF-DESTRUCT via `trap … EXIT` (fires on GREEN, RED, and error alike); **(b)** an ORPHAN SWEEPER reaps
-  anything a `kill -9` / crash leaks — stale `localhost/disposable/*` images, `vcand-*` run containers,
-  and orphan temp dirs — at watcher start AND periodically; **(c)** a BOUNDED cache-GC caps the persistent
-  dnf package cache age-then-size — pruning RPMs older than 45 days first, then LRU size-pruning to ≤ 15 GB
-  (both overridable env) — so it can NEVER exhaust the quota; the layer footprint needs no size cap because
-  each candidate's layers self-bound via its own `rmi` (dangling layers are swept opportunistically). The
-  package cache persists across all iterations; only the candidate is disposable, and nothing is allowed to
-  leak unboundedly.
 
+**THROWAWAY TREE & CHURN (build discipline — BINDING for every build, both tiers).** This box self-develops via PR; any build it triggers follows the same discipline. Full mechanics in `fedora-dev` `CLAUDE.md` Principle 10 and `fedora-bootstrap` `CLAUDE.md` Principle 10 — disposable throwaway tree (NEVER mutates the immutable live tree), persistent dnf package cache (bind-mounted plain dir, NOT a layer; survives every `rmi`), EXIT-trap teardown. **Never `--no-cache`/prune during churn.**
 ## ROLE
 
 Arthur's personal remote workstation — the maintainer's box, two functions on one desktop:
