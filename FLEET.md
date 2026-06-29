@@ -52,32 +52,7 @@ Arthur on the web). Mechanically enforced by the `gate-push.sh` PreToolUse hook 
 
 ## The autonomy mandate — the apparatus's primary purpose
 
-`fedora-dev` + `fedora-bootstrap` are ONE self-sustaining development apparatus (every box develops
-inside it). Its PRIMARY PURPOSE: keep the human OUT of the loop until genuinely needed. The agent does
-MOST of the work + the thinking and runs the loop above autonomously — **the PR is its proof of work.**
-
-- **Build-and-discard, don't option-shop.** When there are options, the agent BUILDS 2–3, tests them
-  through the live-gate, DISCARDS what doesn't fit, and lands the right one ITSELF — it recommends AND
-  self-tests its own recommendation, and TEARS DOWN + REBUILDS to a zero-base rather than defend a first
-  draft. Presenting an options-decision is RARE.
-- **Engage the human for EXACTLY TWO reasons:** (1) MATERIALLY COMPLETE → the clickable APPROVE to
-  merge; (2) MATERIALLY BLOCKED → a genuine roadblock needing a DECISION (not a merge). Status-checks,
-  option-shopping, and "which should I do" are NOT reasons.
-- **Two-tier validation — NOT every change goes to the host.** *Tier 1 — IN-BOX (the DEFAULT):* the
-  dev-box `podman build` IS the throwaway — develop + validate + iterate ENTIRELY in the nested engine
-  for everything it CAN build+validate itself, with NO host involvement (the overwhelming majority of
-  iteration). *Tier 2 — HOST (via the `live-validate` label, ONLY two scenarios):* (1) the nested engine
-  CANNOT build/run the throwaway (e.g. the systemd-PID-1 GRD lineage that can't boot nested) → the host
-  does the throwaway build+validate; (2) FINAL pre-production shipment — after all in-box iterations, the
-  agent tickets the host to throwaway-build, prove it works LIVE, and tear it down, THEN presents
-  merge-to-main. In-box iteration does NOT touch the host.
-- **Throwaway tree & churn (build discipline).** Disposable throwaway — never the live tree. Persistent dnf package cache (bind-mounted plain dir, NOT a layer; survives every `rmi`). EXIT-trap teardown, orphan sweeper, bounded cache GC. **Never `--no-cache`/prune during churn.** Full mechanics: `fedora-dev` `CLAUDE.md` Principle 10.
-- **Definition of Done (all four).** (1) the FULL objective materially achieved (not a ~5% slice); (2)
-  validated through the two-tier loop — in-box build GREEN is the default proof, with the host live-gate
-  verdict GREEN required for the two Tier-2 scenarios only (nested engine can't validate it, OR final
-  pre-production shipment); (3) adheres to the BUILD PRINCIPLES; (4) a self-examined TLDR that the agent
-  dry-runs AS IF it were the human — if it fails its own scrutiny the agent returns to the loop instead
-  of presenting. Only then does the change go to the human.
+Full law: `policy/CLAUDE.md` (THE SELF-SUSTAINING APPARATUS section); always in context. This box's role: develop knowledge-work tooling; every change → open a PR (this box never merges).
 
 ## The three boxes
 
