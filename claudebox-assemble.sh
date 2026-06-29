@@ -120,8 +120,21 @@ podman exec claudebox bash "/run/host$LIVE/claudebox-init.sh" "$(id -u)"
 
 echo "==== post-assemble: stamp enterprise policy into the box ===="
 podman exec claudebox mkdir -p /etc/claude-code
-podman exec claudebox cp \
-    "/run/host$LIVE/policy/CLAUDE.md" /etc/claude-code/CLAUDE.md
+# Assemble the law: per-box header + <!--FLEET-CORE--> marker replaced by fleet-core.md
+# (fleet-core.md mastered in fedora-dev). Use the local live clone if co-installed;
+# fall back to GitHub raw (public repo; network is required for dnf installs anyway).
+_fc="${HOME}/.local/share/fedora-dev/policy/fleet-core.md"
+if [ ! -f "$_fc" ]; then
+    _fc=$(mktemp /tmp/fleet-core-XXXXXX)
+    curl -fsSL "https://raw.githubusercontent.com/oso-gato/fedora-dev/main/policy/fleet-core.md" \
+        > "$_fc" || { echo "FATAL: cannot fetch fleet-core.md from fedora-dev" >&2; rm -f "$_fc"; exit 1; }
+fi
+_law=$(mktemp /tmp/assembled-law-XXXXXX)
+sed -e "/<!--FLEET-CORE-->/r ${_fc}" \
+    -e "/<!--FLEET-CORE-->/d" \
+    "${LIVE}/policy/CLAUDE.md" > "$_law"
+podman exec claudebox cp "/run/host${_law}" /etc/claude-code/CLAUDE.md
+rm -f "$_law" "$_fc"
 podman exec claudebox cp \
     "/run/host$LIVE/policy/managed-settings.json" /etc/claude-code/managed-settings.json
 
