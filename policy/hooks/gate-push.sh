@@ -168,22 +168,33 @@ scan_text() {
 # multi-command payload and any payload carrying a SECOND git or push, so the
 # exemption can't be reused to smuggle an arbitrary `git push origin main`.
 is_vault_sync_push() {
-    local c vesc gits pushes
+    local c vesc gits pushes cdir real
     c="$(printf '%s' "$cmd" | tr '\n' ' ')"
     printf '%s' "$c" | grep -Eq '[;&|`]|\$\(' && return 1
     gits="$(printf '%s' "$c" | grep -oE '(^|[^[:alnum:]_./-])git([[:space:]]|$)' | wc -l)"
     pushes="$(printf '%s' "$c" | grep -oE '(^|[^[:alnum:]_])push([[:space:]"}]|$)' | wc -l)"
     [ "$gits" -eq 1 ] && [ "$pushes" -eq 1 ] || return 1
     vesc="$(printf '%s' "$VAULT_DIR" | sed 's/[][\.*^$]/\\&/g')"
-    printf '%s' "$c" | grep -Eq '(^|[^[:alnum:]_])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-C[[:space:]]+'"$vesc"'([[:space:]/"]|$)' \
-        && printf '%s' "$c" | grep -Eq '(^|[^[:alnum:]_])push([[:space:]"}]|$)'
+    printf '%s' "$c" | grep -Eq '(^|[^[:alnum:]_])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-C[[:space:]]+'"$vesc"'([[:space:]/"]|$)' || return 1
+    printf '%s' "$c" | grep -Eq '(^|[^[:alnum:]_])push([[:space:]"}]|$)' || return 1
+    # The prefix match above is satisfied by `<vault>/../../<elsewhere>`, which git's
+    # -C then chdir-resolves OUTSIDE the vault. So reject any `..` path component and
+    # CANONICALIZE the actual -C target, requiring it to be the vault (or a true child).
+    printf '%s' "$c" | grep -Eq '(^|[/[:space:]"])\.\.([/[:space:]"]|$)' && return 1
+    cdir="$(printf '%s' "$c" | grep -oE '[[:space:]]-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | head -1 | sed -E 's/^[[:space:]]+-C[[:space:]]+//; s/^"//; s/"$//')"
+    [ -n "$cdir" ] || return 1
+    real="$(readlink -m -- "$cdir" 2>/dev/null)" || return 1
+    case "$real" in
+        "$VAULT_DIR"|"$VAULT_DIR"/*) return 0;;
+        *)                           return 1;;
+    esac
 }
 
 # is_safe_push(raw): true iff RAW is a `git push` that is SAFE to run autonomously
 # — at least one EXPLICIT refspec after the remote, every DESTINATION an explicit
 # non-main, non-HEAD, non-tag branch. FAIL CLOSED: any ambiguity -> false (-> DENY).
 is_safe_push() {
-    local raw="$1" text after remote tok dst
+    local raw="$1" text after remote tok dst ndst
 
     printf '%s' "$raw" | grep -Eq -- '(^|[^[:alnum:]_-])--(all|mirror|tags)([[:space:]=]|$)' && return 1
     printf '%s' "$raw" | grep -Eq '[`]|\$\(' && return 1
@@ -211,9 +222,16 @@ is_safe_push() {
         esac
         [ -n "$dst" ] || return 1
         case "$dst" in
-            main|refs/heads/main) return 1;;
             HEAD|HEAD*)           return 1;;
             refs/tags/*)          return 1;;
+        esac
+        # git resolves an unqualified push destination (`main`, `heads/main`) to
+        # refs/heads/main, so strip the optional refs/ + heads/ qualifiers before
+        # the main test -- otherwise `git push origin x:heads/main` would slip past
+        # as a "feature branch" and land on main with no gate.
+        ndst="${dst#refs/}"; ndst="${ndst#heads/}"
+        case "$ndst" in
+            main) return 1;;
         esac
     done
     return 0
