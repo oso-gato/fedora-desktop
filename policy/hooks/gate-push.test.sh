@@ -63,6 +63,7 @@ check ALLOW 'git push --force origin feat/x'
 check ALLOW 'git push origin +feat/x'
 check ALLOW 'git push origin --delete feat/x'
 check ALLOW 'git push origin HEAD:feat/x'
+check ALLOW 'git push origin feat/x:feature/main'
 check ALLOW 'gh pr create -t a -b b'
 check ALLOW 'gh pr edit 5 --add-label live-validate'
 check ALLOW 'gh pr comment 5 -b hi'
@@ -72,12 +73,17 @@ echo "== ALLOW (the SOLE vault-sync exemption — git -C <vault> push) =="
 check ALLOW "git -C $VAULT push"
 check ALLOW "git -C $VAULT push origin main"
 check ALLOW "git -C $VAULT push origin HEAD"
+check ALLOW "git -C $VAULT/notes push origin main"
 
 echo
 echo "== DENY (could touch main / ambiguous — this box never pushes main) =="
 check DENY 'git push origin main'
 check DENY 'git push origin HEAD:main'
 check DENY 'git push origin feat/x:main'
+check DENY 'git push origin feat/x:heads/main'
+check DENY 'git push origin HEAD:heads/main'
+check DENY 'git push origin heads/main'
+check DENY 'git push origin refs/heads/main'
 check DENY 'git push --force origin main'
 check DENY 'git push'
 check DENY 'git push origin'
@@ -86,6 +92,9 @@ check DENY 'git push --all origin'
 check DENY 'git push --mirror origin'
 check DENY 'git push origin refs/tags/v1'
 check DENY 'git -C /tmp/x push origin main'
+check DENY "git -C $VAULT/../../.local/share/fedora-desktop push origin main"
+check DENY "git -C $VAULT/.. push origin main"
+check DENY "git -C $VAULT/../evil push origin main"
 
 echo
 echo "== DENY (merge verbs — this box never merges) =="
