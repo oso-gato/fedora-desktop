@@ -1,10 +1,10 @@
 #!/bin/bash
 # fedora-desktop PID 1 (root). MERGED supervisor:
 #
-#   HARNESS (from fedora-dev/entrypoint.sh):
-#     * rsyslog (collects sshd auth events to /var/log/secure for fail2ban)
-#     * sshd (key-only; mosh rides on it; tailscale --ssh is the keyless tailnet door)
-#     * fail2ban (watches /var/log/secure, bans brute-force IPs on public :4444)
+#   HARNESS (from fedora-dev/entrypoint.sh, MINUS fail2ban/rsyslog — ssh is
+#   tailnet-only here, so the brute-force apparatus guarded a door never opened;
+#   the public door's defense is guacamole-auth-ban):
+#     * sshd (key-only, TAILNET-ONLY; mosh rides on it; tailscale --ssh is the keyless tailnet door)
 #     * tailscaled (+ tailscale up, unattended via TS_AUTHKEY or interactive banner)
 #     * core's rootless podman API socket (CONTAINER_HOST target for the box)
 #     * inotify watcher for in-box claudebox-rebuild flag
@@ -295,21 +295,16 @@ if [ ! -f /var/lib/guac-cert/keystore.p12 ]; then
 fi
 
 # ============================================================================
-# HARNESS: rsyslog + sshd + fail2ban + tailscaled
+# HARNESS: sshd + tailscaled
 # ============================================================================
+# NOTE: no rsyslog / fail2ban here. ssh is tailnet-only on this lineage (the nft
+# guard below drops :22 off non-tailnet interfaces; run.sh publishes only the web
+# port), so the fedora-dev ssh-brute-force apparatus guarded a door never opened
+# here and was dropped (see install.sh sshd block). The public door's brute-force
+# defense is guacamole-auth-ban.
 
-# ---- rsyslog: collect sshd auth events to /var/log/secure (fail2ban reads it)
-/usr/sbin/rsyslogd -n &
-rsyslog_pid=$!
-
-# ---- sshd: container :22 (host publishes public :4444 via Quadlet/run.sh) ----
+# ---- sshd: container :22 (TAILNET-ONLY — never published; nft-guarded below) --
 /usr/sbin/sshd
-
-# ---- fail2ban: brute-force protection on the public :4444 path --------------
-# Starts after sshd so the log target exists. fail2ban tolerates a missing log
-# file at startup (begins watching once it appears).
-fail2ban-server -xf start &
-fail2ban_pid=$!
 
 # ---- tailscaled --------------------------------------------------------------
 /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state \
@@ -344,7 +339,7 @@ fi
 # the web port, and THIS nft rule drops those ports on every interface except lo
 # (loopback: guacd) and tailscale0 (the tailnet) — so a future `-p 22`
 # / `-p 3389` slip can't expose key/password auth to the public internet. The web
-# port is NOT dropped (policy accept). Own table (never collides with fail2ban's);
+# port is NOT dropped (policy accept). Own dedicated table (`fd_tailnet_guard`);
 # `iifname` matches by name so it loads before tailscale0 exists; best-effort
 # (needs NET_ADMIN), never fatal to PID 1.
 nft -f - <<'NFT' 2>/dev/null || echo "[net-guard] tailnet-guard skipped (no NET_ADMIN / nft?)"
@@ -615,8 +610,6 @@ while sleep 30; do
     # Harness
     pgrep -x tailscaled         >/dev/null 2>&1 || { echo "tailscaled died";       exit 1; }
     pgrep -x sshd               >/dev/null 2>&1 || { echo "sshd died";             exit 1; }
-    kill -0 "$rsyslog_pid"      2>/dev/null     || { echo "rsyslogd died";         exit 1; }
-    kill -0 "$fail2ban_pid"     2>/dev/null     || { echo "fail2ban-server died";  exit 1; }
     kill -0 "$podman_sock_pid"  2>/dev/null     || { echo "podman socket died";    exit 1; }
     kill -0 "$watcher_pid"      2>/dev/null     || { echo "rebuild watcher died";  exit 1; }
     kill -0 "$tick_pid"         2>/dev/null     || { echo "daily tick died";       exit 1; }

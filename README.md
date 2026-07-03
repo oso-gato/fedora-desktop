@@ -7,7 +7,7 @@ vault + an LLM wiki) — capable enough to build and update *its own* code, but 
 can't reach out and disturb your wider setup.
 
 It's the **fedora-dev harness** (a self-refreshing Claude Code box: nested rootless podman,
-key-only SSH, fail2ban, Tailscale, a daily-rebuilt "claudebox") with an **XFCE desktop**
+key-only SSH, Tailscale, a daily-rebuilt "claudebox") with an **XFCE desktop**
 layered on (the XFCE/xrdp desktop recipe). Claude Code refreshes itself *daily*,
 independent of the heavier desktop. The vault/wiki are governed by their *own* rules —
 Claude is the writer, you are the director.
@@ -104,8 +104,10 @@ a short TLDR the box has already checked against its own work as if it were you.
   user the box creates). **Every other repo is off-limits.** The box **opens PRs only — it never
   merges**: develop → open PR → STOP; `fedora-dev` merges on Arthur's click (THE FLEET).
 
-It is the **fedora-dev harness extended**, not a fork — the nested-podman + sshd/fail2ban +
-tailscale + daily-claudebox machinery is lifted verbatim and the XFCE remote desktop
+It is the **fedora-dev harness extended**, not a fork — the nested-podman + key-only sshd +
+tailscale + daily-claudebox machinery is lifted from fedora-dev (minus its fail2ban/rsyslog
+ssh-brute-force apparatus — ssh is tailnet-only here, so it guarded a door never opened; the
+public web door's defense is guacamole-auth-ban) and the XFCE remote desktop
 (the XFCE/xrdp desktop recipe) is layered on top.
 
 ```
@@ -134,7 +136,7 @@ metapackage traps) lives in [CLAUDE.md](CLAUDE.md).
 |---|---|---|
 | 1 | BASE | Build only from `registry.fedoraproject.org/fedora:${FEDORA_VERSION}`. Version is a Containerfile `ARG`, never inlined. |
 | 2 | SOURCES | Every package from exactly one official source: (a) Fedora's own repos via dnf; (b) the vendor's/developer's own RPM or dnf repo (`.repo`, `gpgcheck=1`); (c) at worst a developer/vendor-released AppImage (sha256 logged). NEVER COPR, pip/npm/cargo/gem/brew global, curl-pipe-sh, tarball-on-PATH, flatpak, snap. Applies to BOTH the base image AND the claudebox `additional_packages`. **Current waivers: none.** |
-| 3 | MINIMAL | dnf with `--setopt=install_weak_deps=False`; install the **leaf** package, never a convenience metapackage (weak-dep blocking does NOT stop a metapackage's hard Requires — e.g. `fail2ban` hard-pulls firewalld + esmtp; we install `fail2ban-server`). Every package gets a justifying row in the Packages table; a package without a row is a violation. |
+| 3 | MINIMAL | dnf with `--setopt=install_weak_deps=False`; install the **leaf** package, never a convenience metapackage (weak-dep blocking does NOT stop a metapackage's hard Requires — e.g. the `mariadb` metapackage vs the `mariadb-server` leaf we install; and the `fail2ban` metapackage hard-pulls firewalld + esmtp, which is why the box installed `fail2ban-server` back when it ran fail2ban — it now installs neither, ssh being tailnet-only). Every package gets a justifying row in the Packages table; a package without a row is a violation. |
 | 4 | VERIFY FIRST | Before adopting/bumping any source or pin, fact-check it against the live source. Gate risky installs in a scratch container before editing build files. |
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. User is the generic `core` (uid 1000). `RDP_PW` / `GUAC_PW` (required) + `RFB_PW` / `TS_AUTHKEY` (optional) enter ONLY at runtime; the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache `GUAC_VERSION` + its `GUAC_GPG_FP` are Containerfile `ARG`s (the `.war` + the auth-ban/-jdbc/-totp extensions all ride them); bump there only, after a rule-4 check. rclone + tomcat-jakartaee-migration are Fedora class-(a) packages — no version pin. (Obsidian is intentionally latest-at-build, sha256-logged.) |
@@ -159,14 +161,12 @@ cloud is rclone-only.
 | shadow-utils | harness | a | `newuidmap`/`newgidmap` setuid helpers — mandatory for nested rootless podman |
 | fuse-overlayfs | harness | a | nested rootless storage driver (kernel forbids native overlay-on-overlay) |
 | passt | harness | a | pasta — podman 5's default rootless network backend |
-| nftables | harness | a | firewall backend: tailscaled programs rules via the nftables Netlink API, netavark defaults to nftables on Fedora 41+, fail2ban bans via `nftables[type=multiport]`. (No iptables — verified unnecessary.) |
+| nftables | harness | a | firewall backend: tailscaled programs rules via the nftables Netlink API, netavark defaults to nftables on Fedora 41+, and the entrypoint `fd_tailnet_guard` fences ssh/RDP/VNC to the tailnet. (No iptables — verified unnecessary.) |
 | openssh-server | harness | a | the login door (key-only; keys synced from `github.com/oso-gato.keys` each start). **TAILNET-ONLY** — keyless Tailscale SSH + ssh-key over the tailnet (never `-p`; the nft guard drops :22 off non-tailnet ifaces); mosh bootstraps over it |
 | mosh | harness | a | roaming-resilient remote shell (UDP, AEAD-authenticated). Public UDP range 61001-62000 (non-default, to avoid colliding with the bootstrap host's own mosh) |
 | tmux | harness | a | session multiplexer; every interactive login auto-attaches `main`; survives disconnects/restarts |
 | distrobox | harness | a | declaratively bootstraps the in-container claudebox via `distrobox assemble create --file distrobox.ini` |
 | inotify-tools | harness | a | `inotifywait` watches the in-box `rebuild.request` flag (no systemd `.path` units — no systemd inside, by design) |
-| fail2ban-server | harness | a | brute-force mitigation on the ssh auth path (defense-in-depth; ssh is tailnet-only); bans via `nftables[type=multiport]`; tailnet CGNAT 100.64.0.0/10 is `ignoreip`'d. The **leaf** package (the `fail2ban` metapackage hard-pulls firewalld + esmtp — see Principle 3) |
-| rsyslog | harness | a | captures sshd's AUTHPRIV to `/var/log/secure` so fail2ban can read it (no journald in this container) |
 | sudo | harness | a | break-glass escalation (`core` in `wheel`); near-zero footprint (host-side `podman exec -u 0` is the real recovery door) |
 | procps-ng | harness | a | `pgrep` for the entrypoint watchdog AND the `--health-cmd` |
 | glibc-langpack-en | harness | a | UTF-8 rendering for tmux/terminal |
@@ -321,7 +321,7 @@ The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.
 |---|---|---|---|
 | 🌐 Guacamole web (TLS) | `${WEB_PORT}`→8443/tcp | **PUBLIC — the ONLY public door** | web login `core` / `GUAC_PW` **+ TOTP 2FA** → SSO into local RDP |
 | 🪪 Tailscale SSH | tailnet :22 | tailnet-only | keyless (Tailscale identity) — **the primary maintenance / recovery path** |
-| 🔑 SSH (key) | :22 | **TAILNET-ONLY (never `-p`)** | ssh-key over the tailnet (keys from `github.com/oso-gato.keys`); fail2ban-guarded |
+| 🔑 SSH (key) | :22 | **TAILNET-ONLY (never `-p`)** | ssh-key over the tailnet (keys from `github.com/oso-gato.keys`); nft-guarded to the tailnet |
 | 📡 Mosh | UDP | **TAILNET-ONLY** | over the tailnet ssh |
 | 🖥️ RDP | 3389/tcp | **TAILNET-ONLY (never `-p`)** | `core` / `RDP_PW` (native clients: mstsc, Windows App) |
 | 🖲️ VNC | 5900/tcp | **TAILNET-ONLY (never `-p`)** | `RFB_PW` (only if set) — mirrors the RDP session |
@@ -379,7 +379,7 @@ compares before restart, enabling its auto-rollback). `Notify=healthy`, `AutoUpd
 Takes ~2-5 minutes. The entrypoint seeds `core`'s password from `RDP_PW`, syncs ssh keys from
 `github.com/oso-gato.keys`, mints the Guacamole TLS keystore, brings up the loopback MariaDB
 engine + provisions DB-backed web auth (each web login + its desktop/fleet tiles), starts
-rsyslog + sshd + fail2ban + tailscaled + xrdp + mariadbd + guacd + Tomcat, then eagerly
+sshd + tailscaled + xrdp + mariadbd + guacd + Tomcat, then eagerly
 assembles the claudebox in the background (dnf-installs claude-code + tools inside the box). The
 first `claude` invocation tails the assemble log if it's still in progress. If `TS_AUTHKEY` is
 unset the tailnet join is interactive — `podman logs -f fedora-desktop` for the one-time login URL.

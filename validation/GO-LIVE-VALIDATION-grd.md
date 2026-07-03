@@ -6,7 +6,7 @@ end-to-end production proof on a live host, mirroring xrdp's B-gates.
 
 **grd is functionally equivalent to xrdp v1.0.0 by DESIGN — same web door (Apache Guacamole on
 :8443), same multi-user + per-user fleet grants + TOTP + auth-ban + shared folder, same harness
-(claudebox / ssh / fail2ban / cloud+vault sync). Only the INIT contract + the desktop differ:**
+(claudebox / key-only tailnet-only ssh / cloud+vault sync). Only the INIT contract + the desktop differ:**
 systemd-PID-1 + GNOME-50-Wayland headless (gdm-spawned per-user `gnome-remote-desktop-headless`
 on per-user loopback RDP ports), vs xrdp's supervised-bash + XFCE/X11.
 
@@ -34,7 +34,7 @@ shared folder, auth-ban — AND that the **shipped code** (not the spike harness
 - **#68** `feat/grd-session-race-twopass` — the session-bus race fix (the spike waited 25s before
   `grdctl`; the shipped entrypoint had dropped it → black desktop). **Without this grd does not paint.**
 - **#71** `feat/grd-harness-parity` — claudebox dev capability (podman.socket + eager assemble) +
-  the daily-refresh timer + rebuild-watcher + sshd/fail2ban/host-keys + cloud/vault sync.
+  the daily-refresh timer + rebuild-watcher + sshd-hardening/host-keys + cloud/vault sync.
   **Without #71, `claude`/claudebox is dead on grd and ssh is unhardened.**
 - **#69** `feat/grd-spinup-image-default` — `spin-up.sh` defaults to `:grd` for LINEAGE=grd
   (else it pulls the **xrdp** image and runs it under `--systemd=always` → box never comes up).
@@ -140,7 +140,7 @@ RDP_PW='<strong>' GUAC_PW='<strong>' WEB_PORT=8444 \
   exit 0; CI PR builds are the proof of record).
 - **Assembly-verified:** the fixes are present in the built image — `default.target.wants/{claudebox-
   bootstrap,cloud-sync,vault-gitsync}.service` + `sockets.target.wants/podman.socket` enabled; the sshd
-  hardening drop-in, fail2ban jail, persistent-host-key drop-in, and bootstrap script all present;
+  hardening drop-in, persistent-host-key drop-in, and bootstrap script all present;
   baked host keys stripped.
 - **Static-verified:** `bash -n` on all scripts, `systemd-analyze` on the units, the session bring-up
   diffed against the host-proven spike (two-pass + bus-poll), the web-door params (`security=any`,

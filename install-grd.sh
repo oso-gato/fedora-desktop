@@ -56,7 +56,7 @@ $DNF install \
     systemd systemd-pam \
     podman shadow-utils fuse-overlayfs passt nftables \
     openssh-server mosh tmux distrobox inotify-tools \
-    fail2ban-server rsyslog sudo procps-ng glibc-langpack-en nano \
+    sudo procps-ng glibc-langpack-en nano \
     tailscale \
     gnome-shell gnome-session mutter gsettings-desktop-schemas \
     ptyxis nautilus \
@@ -95,7 +95,7 @@ setcap cap_setuid+ep /usr/bin/newuidmap
 setcap cap_setgid+ep /usr/bin/newgidmap
 
 # ---- harness as systemd units ----------------------------------------------
-systemctl enable sshd.service rsyslog.service fail2ban.service tailscaled.service
+systemctl enable sshd.service tailscaled.service
 # core's LINGERING user manager hosts the nested rootless podman socket + the
 # daily-refreshed claudebox. loginctl needs a running logind (absent at build) →
 # write the linger marker directly (idempotent). (Per-user DESKTOP sessions are
@@ -155,11 +155,14 @@ WantedBy=multi-user.target
 EOF
 systemctl enable fedora-desktop-grd-netguard.service
 
-# ---- sshd hardening + persistent host keys + fail2ban jail (xrdp harness parity) ----
-# install-grd enabled sshd/rsyslog/fail2ban as units, but without these configs the grd
-# ssh door ran STOCK Fedora sshd (password-auth posture unhardened), regenerated host keys
-# every recreation (MITM-warning churn), and fail2ban watched nothing. Byte-equivalent to
-# the xrdp install.sh drop-ins (install.sh:186-198, 213-227). ssh is :22, tailnet-only.
+# ---- sshd hardening + persistent host keys (xrdp harness parity) ----
+# Harden the stock Fedora sshd (key-only posture) + keep a persistent host key on
+# the state volume (else every recreation regenerates it → MITM-warning churn).
+# ssh is :22, TAILNET-ONLY (the netguard oneshot above drops it off non-tailnet
+# interfaces; run.sh.grd publishes only the web port). No fail2ban/rsyslog on this
+# lineage — see the packages transaction: the brute-force apparatus guarded a public
+# ssh door fedora-dev has and this box does not; the public door's defense is
+# guacamole-auth-ban.
 cat > /etc/ssh/sshd_config.d/99-fedora-desktop.conf <<'EOF'
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -168,9 +171,6 @@ MaxAuthTries 3
 PermitRootLogin no
 AllowUsers core
 HostKey /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
-# AUTHPRIV so rsyslog captures auth events to /var/log/secure for fail2ban.
-SyslogFacility AUTHPRIV
-LogLevel VERBOSE
 EOF
 rm -f /etc/ssh/ssh_host_*_key*   # never ship host keys in a published image
 # Persistent host key on the bound state volume, minted BEFORE sshd starts. The xrdp
@@ -185,23 +185,6 @@ ExecStartPre=/bin/bash -c '[ -f /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
 # first-EVER boot has NO keyless window (sshd is key-only). Runs as core (writes core's
 # ~/.ssh at 0600); keeps the cached file on a fetch failure. Mirrors entrypoint.sh.
 ExecStartPre=-/usr/sbin/runuser -u core -- /bin/bash -c 'set -u; mkdir -p ~/.ssh; chmod 0700 ~/.ssh; tmp=$(mktemp); if curl -fsSL --max-time 10 https://github.com/oso-gato.keys -o "$tmp" && [ -s "$tmp" ]; then mv "$tmp" ~/.ssh/authorized_keys; chmod 0600 ~/.ssh/authorized_keys; echo "[ssh-keys] synced from github.com/oso-gato.keys ($(wc -l < ~/.ssh/authorized_keys) keys)"; else rm -f "$tmp"; if [ -s ~/.ssh/authorized_keys ]; then echo "[ssh-keys] GitHub unreachable; keeping cached ~/.ssh/authorized_keys"; else echo "[ssh-keys] WARNING: GitHub unreachable AND no cached keys — public ssh closed; use Tailscale SSH to recover"; fi; fi'
-EOF
-# fail2ban jail: brute-force lockout on ssh, reading rsyslog's /var/log/secure, with tailnet
-# CGNAT (100.64/10) + loopback ignore'd. nftables backend (no firewalld). Identical to xrdp.
-install -d -m 0755 /etc/fail2ban/jail.d
-cat > /etc/fail2ban/jail.d/sshd-fedora-desktop.local <<'EOF'
-[DEFAULT]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-backend = auto
-ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
-banaction = nftables[type=multiport]
-
-[sshd]
-enabled = true
-port = 22
-logpath = /var/log/secure
 EOF
 
 # ---- surface the Tailscale interactive login on remote logins until the node
@@ -228,9 +211,8 @@ if [ -n "$_ts_state" ] && [ "$_ts_state" != "Running" ]; then
         printf '     No login URL yet - run:  tailscale up --ssh --hostname=fedora-desktop-grd\n'
     fi
     printf '     Tailnet SSH works once you approve it; this notice then disappears.\n\n'
-    read -rt 60 -p '     Press Enter to continue to your shell... ' _ts_ack || true
 fi
-unset _ts_state _ts_url _ts_ack 2>/dev/null || true
+unset _ts_state _ts_url 2>/dev/null || true
 EOF
 
 # ---- every interactive remote login lands in the persistent tmux workspace ----
