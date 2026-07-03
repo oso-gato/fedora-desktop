@@ -2,10 +2,13 @@
 # fedora-desktop base-image install.
 #
 # TWO HALVES, ONE LAYER:
-#   PART A — the fedora-dev HARNESS, lifted VERBATIM (nested rootless podman +
-#            key-only sshd + fail2ban + rsyslog + tailscale + the box-bootstrap
-#            tooling). claude-code is NOT installed here — it lives in the
-#            claudebox (distrobox.ini additional_packages, daily-refreshed).
+#   PART A — the fedora-dev HARNESS (nested rootless podman + key-only sshd +
+#            tailscale + the box-bootstrap tooling). Lifted from fedora-dev, MINUS
+#            the fail2ban/rsyslog ssh-brute-force apparatus: fedora-dev publishes
+#            a public ssh door, this lineage does not (ssh is tailnet-only), so
+#            that apparatus guarded a door never opened here — see the sshd block.
+#            claude-code is NOT installed here — it lives in the claudebox
+#            (distrobox.ini additional_packages, daily-refreshed).
 #   PART B — the XFCE/xrdp DESKTOP: XFCE (X11) + xrdp/xorgxrdp +
 #            guacd/Tomcat/Guacamole web door + the app set (Obsidian, VS Code,
 #            Firefox, 1Password GUI+CLI, rclone).
@@ -28,7 +31,7 @@ DNF="dnf -y --setopt=install_weak_deps=False"
 : "${GUAC_GPG_FP:?GUAC_GPG_FP ARG must be passed from Containerfile}"
 
 # ============================================================================
-# PART A — fedora-dev HARNESS (verbatim from fedora-dev/install.sh)
+# PART A — fedora-dev HARNESS (from fedora-dev/install.sh, MINUS fail2ban/rsyslog)
 # ============================================================================
 
 # ---- vendor dnf repos -------------------------------------------------------
@@ -51,7 +54,6 @@ $DNF install \
     podman shadow-utils fuse-overlayfs passt nftables \
     openssh-server mosh tmux tailscale \
     distrobox inotify-tools \
-    fail2ban-server rsyslog \
     sudo procps-ng glibc-langpack-en nano
 
 # ---- defensive: restore file caps on newuidmap/newgidmap --------------------
@@ -112,8 +114,9 @@ EOF
 
 # ---- surface the Tailscale interactive login on remote logins until the node
 # is on the tailnet. A fresh state volume has no persisted identity, so the
-# one-time browser join has to happen somewhere — and a freshly-deployed box has
-# no shell without either the public :4444 ssh door or the tailnet. Print the
+# one-time browser join has to happen somewhere — and because ssh is tailnet-only,
+# a freshly-deployed box has no terminal until the node joins the tailnet (the web
+# desktop door is the other way in). Print the
 # live login URL on each interactive login until connected. Runs BEFORE the tmux
 # attach below (tmux redraws the screen and would hide it); sorts first by filename.
 cat > /etc/profile.d/zz-tailscale-login.sh <<'EOF'
@@ -220,13 +223,17 @@ bind-key g {
 }
 EOF
 
-# ---- sshd (key-only; reachable via tailnet :22 AND host-published public :4444)
+# ---- sshd (key-only; TAILNET-ONLY, container :22) --------------------------
 # Host keys live on the root-owned tailscale state volume (NOT under core's
 # home — core owns that tree and could swap keys) and are generated at runtime.
-# Public ssh on port 4444 is published by the Quadlet/run.sh; container sshd
-# listens on 22. Keys for core are synced from github.com/oso-gato.keys by the
-# entrypoint at every container start (cached on the home volume so GitHub
-# being briefly unreachable doesn't lock the operator out).
+# sshd listens on :22 and is TAILNET-ONLY by construction: run.sh / the Quadlet
+# publish ONLY the web port (never -p 22), and the entrypoint's nft guard drops
+# :22 on every interface except lo + tailscale0. There is NO public ssh door on
+# this lineage (an early draft wrongly referenced a public :4444 — the deploy
+# scripts have always published web-only; see README "Access model"). Keys for
+# core are synced from github.com/oso-gato.keys by the entrypoint at every
+# container start (cached on the home volume so GitHub being briefly unreachable
+# doesn't lock the operator out).
 cat > /etc/ssh/sshd_config.d/99-fedora-desktop.conf <<'EOF'
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -235,40 +242,20 @@ MaxAuthTries 3
 PermitRootLogin no
 AllowUsers core
 HostKey /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
-# AUTHPRIV so rsyslog captures auth events to /var/log/secure for fail2ban.
-SyslogFacility AUTHPRIV
-LogLevel VERBOSE
 EOF
 rm -f /etc/ssh/ssh_host_*_key*   # never ship host keys in a published image
 
-# ---- fail2ban — brute-force mitigation for the public-ssh :4444 path ----
-# We install the LEAF `fail2ban-server` (see Base Packages), NOT the `fail2ban`
-# metapackage: the metapackage HARD-pulls fail2ban-firewalld->firewalld +
-# fail2ban-sendmail->esmtp (an unused firewall + MTA), and install_weak_deps=False
-# does NOT block hard Requires. fail2ban-server is the daemon + the nftables ban action;
-# it bans via `nftables[type=multiport]` (the `nft` binary; nftables is a base package). This
-# image is nft-only — tailscaled programs its rules via the nftables Netlink API (no binary
-# needed) and netavark defaults to nftables on Fedora 41+, so no iptables is installed.
-# fail2ban watches /var/log/secure (rsyslog writes there from sshd's AUTHPRIV
-# facility), bans IPs that fail too many key-auth attempts via nftables.
-# Tailnet CGNAT (100.64.0.0/10) is ignoreip'd — tailnet identity is already
-# authenticated by Tailscale; we don't want a misbehaving tailnet device to
-# ever land on a banned-IP list.
-install -d -m 0755 /etc/fail2ban/jail.d
-cat > /etc/fail2ban/jail.d/sshd-fedora-desktop.local <<'EOF'
-[DEFAULT]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-backend = auto
-ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
-banaction = nftables[type=multiport]
-
-[sshd]
-enabled = true
-port = 22
-logpath = /var/log/secure
-EOF
+# ---- ssh brute-force mitigation: NOT installed (zero-base) ------------------
+# fedora-dev ships fail2ban + rsyslog because it publishes a PUBLIC ssh door.
+# This lineage does NOT: ssh is tailnet-only by construction (run.sh publishes
+# only the web port; the nft guard drops :22 off non-tailnet interfaces), and
+# key-only. Every source fail2ban could act on is therefore either packet-dropped
+# by the guard or is a tailnet identity already authenticated by Tailscale (and
+# would have been ignoreip'd anyway). It could ban nothing reachable — so the
+# whole rsyslog -> /var/log/secure -> fail2ban chain (plus VERBOSE auth logging)
+# was pure inherited weight guarding a door this lineage never opens, and is
+# dropped. Brute-force defense for the ONE public door (Guacamole :8443) is
+# guacamole-auth-ban (PART B), which sits where the exposed surface actually is.
 
 # ============================================================================
 # PART B — the XFCE/xrdp DESKTOP
@@ -360,7 +347,7 @@ echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'
 # extension (guacamole-auth-totp), keeping auth-ban on top. MariaDB + the JDBC driver
 # are Fedora class-(a) LEAF packages (verified `dnf repoquery --requires`: mariadb-server
 # hard-Requires only mariadb/mariadb-common/mariadb-errmsg/coreutils/iproute/which + the
-# systemd shared-lib — the SAME RPM-level systemd dep sshd/fail2ban carry in PART A, NOT
+# systemd shared-lib — the SAME RPM-level systemd dep sshd carries in PART A, NOT
 # a systemd-as-PID-1 requirement; mariadbd runs under the supervised-bash watchdog like
 # every other daemon here. mysql-selinux is a conditional dep on selinux-policy-targeted,
 # which this SELinux-disabled container does not run). The two Guacamole extensions are

@@ -1,5 +1,5 @@
 # fedora-desktop — fedora-dev's headless harness (nested rootless podman + a
-# daily-rebuilt claudebox + key-only sshd/fail2ban/rsyslog + tailscale, NO
+# daily-rebuilt claudebox + key-only tailnet-only sshd + tailscale, NO
 # systemd inside) WITH an XFCE remote-desktop layered on (the XFCE/xrdp
 # desktop recipe). Purpose: operate Arthur's Obsidian vault + LLM wiki, plus
 # maintainer dev.
@@ -90,10 +90,11 @@ COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
 # EXPOSE is metadata only; the authoritative published ports live in run.sh /
-# fedora-desktop.container (PublishPort). The ONLY public-internet doors are the
-# Guacamole web (:8443), public key-only ssh (host :4444 -> :22), and public mosh
-# (UDP 61001-62000). RDP :3389 and VNC :5900 are TAILNET-ONLY and are deliberately
-# NOT published — they are listed here only as image metadata.
+# fedora-desktop.container (PublishPort). The ONLY public-internet door is the
+# Guacamole web gate (:8443). ssh (:22), mosh (UDP 61001-62000), RDP (:3389) and
+# VNC (:5900) are TAILNET-ONLY — run.sh publishes only the web port and the
+# entrypoint nft guard drops the rest off non-tailnet interfaces; they are listed
+# here only as in-container image metadata, never published.
 EXPOSE 22 8443 3389 5900 61001-62000/udp
 
 # No HEALTHCHECK: podman builds OCI images which silently drop it. Health is
