@@ -32,14 +32,12 @@ ask_secret() {  # ask_secret "<prompt>" [min-length] — hidden, length-floored,
     echo "  passwords differ — try again" >&2
   done
 }
-# Diceware passphrase generator (the "crypto-wallet seed phrase" model): N random words
-# from the bundled EFF wordlist -> high entropy (6 words ~ 77 bits) yet typable on mobile.
-# Falls back to a high-entropy random string if the wordlist is somehow absent.
-WORDLIST="$(dirname "$0")/passphrase-wordlist.txt"
-gen_passphrase() {  # gen_passphrase [nwords]
-  local n="${1:-6}"
-  if [ -r "$WORDLIST" ]; then shuf -n "$n" "$WORDLIST" | paste -sd'-' -
-  else openssl rand -base64 24 2>/dev/null | tr -d '/+=' | cut -c1-28; fi
+# High-entropy random password generator: openssl -> ~28 chars (base64 minus the
+# ambiguous +/= chars). The bundled EFF diceware wordlist was dropped as unneeded bulk
+# for a single-operator wizard — the password is saved once (like a wallet seed), so a
+# random string is entropy-equivalent.
+gen_passphrase() {  # gen_passphrase [nwords] — arg ignored, kept for call-site compat
+  openssl rand -base64 24 2>/dev/null | tr -d '/+=' | cut -c1-28
 }
 PASS_MIN=20
 choose_password() {  # choose_password "<label>" — generate (recommended) or type-your-own (>= PASS_MIN)
