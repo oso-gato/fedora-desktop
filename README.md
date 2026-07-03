@@ -139,9 +139,9 @@ metapackage traps) lives in [CLAUDE.md](CLAUDE.md).
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. User is the generic `core` (uid 1000). `RDP_PW` / `GUAC_PW` (required) + `RFB_PW` / `TS_AUTHKEY` (optional) enter ONLY at runtime; the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache `GUAC_VERSION` + its `GUAC_GPG_FP` are Containerfile `ARG`s (the `.war` + the auth-ban/-jdbc/-totp extensions all ride them); bump there only, after a rule-4 check. rclone + tomcat-jakartaee-migration are Fedora class-(a) packages — no version pin. (Obsidian is intentionally latest-at-build, sha256-logged.) |
 | 7 | DEPLOY CONTRACT | `run.sh` is the only sanctioned way to run the image: it carries the runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the **port-publish set**. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. Sensitive ports (RDP/VNC + password-auth) stay tailnet-only — never `-p`. |
-| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. A **control-plane diff-guard** fails any PR touching guardrail files without an explicit waiver label. The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
+| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. A **no-loose-binary backstop** step (Principle 2c) fails the build if any `$PATH` binary isn't rpm-owned. (No control-plane label-gate job — removed in the fleet convergence.) The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)`, functional-probe each access path (web/RDP/VNC/ssh + sync). Final proof is CI green + a host-side deploy. |
-| 10 | PROMOTION GATE | The box is **PR-only** — it opens PRs and never merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled. Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the CI diff-guard. |
+| 10 | PROMOTION GATE | The box is **PR-only** — it opens PRs and never merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled (a review convention — no CI label-gate). Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the server-side `require-PR` ruleset on `main`. |
 
 ## Packages
 
@@ -439,8 +439,10 @@ This box is the **stricter PR-only case** of that gate, enforced mechanically, n
   `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, and an MCP deny on any merge tool
   (it carries **no** blanket `git push` / `gh pr merge` deny — the refspec-aware `gate-push.sh` hook
   is the push/merge gate; the old blanket rules were removed in the control-plane convergence);
-- the **CI control-plane diff-guard** fails any PR touching a guardrail file unless a reviewer
-  applies the `control-plane-approved` label (standalone, never bundled).
+- the server-side **`require-PR` ruleset on `main`** blocks direct pushes (the backstop that closes
+  the headless `claude -p` bypass, where PreToolUse hooks don't fire). Control-plane changes stay
+  standalone/never-bundled as a **review convention** — the CI `control-plane-approved` label-gate
+  job was removed in the fleet convergence (redundant friction for a single operator).
 
 ### Self-develop → PR (the box opens a PR; `fedora-dev` merges)
 
