@@ -436,8 +436,9 @@ This box is the **stricter PR-only case** of that gate, enforced mechanically, n
   variants from this box — there is **no approval marker**; the automatic vault git-sync
   `git -C <vault> push` is the sole exemption;
 - `managed-settings.json` sets `disableBypassPermissionsMode`, `defaultMode: auto`,
-  `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, an MCP deny on any merge tool,
-  blanket `git push` / `gh pr merge` deny rules, and a narrow allow for the vault git-sync push only;
+  `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, and an MCP deny on any merge tool
+  (it carries **no** blanket `git push` / `gh pr merge` deny — the refspec-aware `gate-push.sh` hook
+  is the push/merge gate; the old blanket rules were removed in the control-plane convergence);
 - the **CI control-plane diff-guard** fails any PR touching a guardrail file unless a reviewer
   applies the `control-plane-approved` label (standalone, never bundled).
 

@@ -51,15 +51,18 @@ The box bounds its blast radius by *credential* + *built controls*, not by prose
   **STANDALONE, single-purpose, NEVER bundled** with a feature change, and named so the diff
   summary makes every guardrail touched obvious.
 - **Mechanical enforcement (BUILT, not behavioral):** the managed `PreToolUse` hook
-  (`policy/hooks/gate-push.sh`) **fail-closed denies** every push/merge from this PR-only box
-  (there is **no approval marker**; the automatic vault git-sync `git -C <vault> push` is the sole
-  exemption); `managed-settings.json` disables bypass mode, runs in `auto` mode (the gate is the
-  hook + server-side branch protection, NOT a disabled auto mode), pins managed-only rules/hooks,
-  MCP-denies merge tools, blanket-denies `git push` / `gh pr merge`, and narrowly allows only the
-  vault git-sync push; CI's **control-plane diff-guard** fails any PR touching a guardrail file
-  without the `control-plane-approved` label. (Fleet-wide the promotion gate is refspec-aware and
-  native-`ask` based — see [policy/CLAUDE.md](policy/CLAUDE.md) THE FLEET; this box is the stricter
-  PR-only case.)
+  (`policy/hooks/gate-push.sh`) is **REFSPEC-AWARE and fail-closed** — a feature-branch push (an
+  explicit non-`main`/`HEAD`/tag destination) falls through autonomously, but every **main-touching
+  push and every merge verb is DENIED** (this box never merges, so DENY, not `ask`). There is **no
+  approval marker**; the automatic vault git-sync `git -C <vault> push` is the sole exemption.
+  `managed-settings.json` disables bypass mode, runs in `auto` mode (the gate is the hook +
+  server-side branch protection, NOT a disabled auto mode), pins managed-only rules/hooks, and
+  MCP-denies merge tools. (The old blanket `git push` / `gh pr merge` deny rules were **REMOVED** in
+  the control-plane convergence — they also denied feature-branch pushes and muzzled this box's own
+  PR loop; the refspec-aware hook is now the sole push/merge gate.) CI's **control-plane diff-guard**
+  fails any PR touching a guardrail file without the `control-plane-approved` label. (Fleet-wide the
+  promotion gate is the same refspec-aware, native-`ask` model — see [policy/CLAUDE.md](policy/CLAUDE.md)
+  THE FLEET; this box is the stricter PR-only case.)
 
 When you edit a control-plane file in a PR, expect the CI guard to fail until a maintainer
 applies the waiver label — that is correct, not a bug. Do NOT bundle it with feature work to
@@ -486,8 +489,8 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | bin/guac-db-provision.sh | **SINGLE SOURCE OF TRUTH** for Guacamole DB-backed auth + TOTP provisioning, SOURCED by ALL THREE lineage entrypoints after MariaDB is up. Holds the four TOTP/DB must-dos once (load only 001 + delete/fail-closed guacadmin; remove file-auth user-mapping.xml; non-null-parented connections + DELETE-then-INSERT grant reconciliation; password-only UPSERT that preserves the TOTP seed). All hashing is in SQL (`UNHEX(SHA2(...))`); every value hex-encoded (injection-safe). Lineage params: `RDP_SECURITY` (any/tls), `RDP_PIN_BPP` (1/0). Writes the runtime guacamole.properties (DB password — Principle 5, never baked) |
 | bin/gate-deep-probe.sh | the **deep Gate-B equivalence probe** that `.live-gate`'s `PROBE_{xrdp,grd}` invoke (run INSIDE the candidate via `podman exec`, loopback-only, as root; shipped via the existing `COPY bin/` — no Containerfile change, no new packages). Beyond the basic web `:8443`/RDP `:3389`/DB health it asserts grd↔xrdp functional equivalence at **gate-feasible depth**: the desktop SESSION is rendering (grd: `gnome-headless-session@<user>` active + compositor + GRD is the `:3389` listener; xrdp: live Xorg `:10`), the RDP-server config (grd listener; xrdp `max_bpp=24`/`autorun=Xorg`/`KillDisconnected=false`), the Guacamole jdbc+totp auth chain + the `core` DB identity (guacadmin absent), and **multi-user** per-user RDP port binding (grd USER1 `:3390`). Self-diagnosing — a failed check dumps `[FAIL]`/`SUMMARY` into the RED verdict. Does NOT prove (operator-run per `validation/GO-LIVE-VALIDATION*.md`): a real RDP-pixel frame, cross-device resume, fleet-SSH over a live tailnet |
 | policy/CLAUDE.md | runtime law for the in-claudebox agent (role, push scope, the promotion gate, secret isolation, vault/wiki governance, non-vault cloud). **CONTROL-PLANE** |
-| policy/managed-settings.json | managed-tier guardrails: deny rules (incl. blanket `git push`/`gh pr merge`), `disableBypassPermissionsMode`/`defaultMode: auto`/`allowManagedPermissionRulesOnly`/`allowManagedHooksOnly`, MCP merge-tool deny, the PreToolUse hook wiring. **CONTROL-PLANE** |
-| policy/hooks/gate-push.sh | the PROMOTION-GATE PreToolUse hook: fail-closed deny of `git push` / `gh pr merge` / `gh pr create --merge\|--squash\|--rebase\|--auto` / `gh api …/merges\|/merge` / wrapper-script variants from this PR-only box (no approval marker; the vault git-sync `git -C <vault> push` the sole exemption). Stamped into the claudebox alongside managed-settings.json. **CONTROL-PLANE** |
+| policy/managed-settings.json | managed-tier guardrails: P2-source deny rules (COPR/pip/npm/cargo/gem/brew/flatpak/snap + `Write` to global `bin/`), MCP merge-tool deny, `disableBypassPermissionsMode`/`defaultMode: auto`/`allowManagedPermissionRulesOnly`/`allowManagedHooksOnly`. **No** blanket `git push`/`gh pr merge` deny — the refspec-aware `gate-push.sh` hook is the push/merge gate (the old blanket rules were removed in the control-plane convergence). **CONTROL-PLANE** |
+| policy/hooks/gate-push.sh | the PROMOTION-GATE PreToolUse hook (REFSPEC-AWARE): feature-branch pushes fall through autonomously; fail-closed deny of **main-touching** `git push` / `gh pr merge` / `gh pr create --merge\|--squash\|--rebase\|--auto` / `gh api …/merges\|/merge` / wrapper-script variants from this PR-only box (no approval marker; the vault git-sync `git -C <vault> push` the sole exemption). Stamped into the claudebox alongside managed-settings.json. **CONTROL-PLANE** |
 | .github/workflows/build.yml | CI: build → cosign-sign → push `ghcr.io/oso-gato/fedora-desktop` on push/15th-monthly(`--no-cache`)/dispatch (PRs build-validate only) + the **control-plane diff-guard** job. **CONTROL-PLANE** |
 
 ## NESTED BUILDS — CONTAINER_HOST BRIDGE (reference)
