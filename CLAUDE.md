@@ -51,18 +51,25 @@ The box bounds its blast radius by *credential* + *built controls*, not by prose
   **STANDALONE, single-purpose, NEVER bundled** with a feature change, and named so the diff
   summary makes every guardrail touched obvious.
 - **Mechanical enforcement (BUILT, not behavioral):** the managed `PreToolUse` hook
-  (`policy/hooks/gate-push.sh`) **fail-closed denies** every push/merge from this PR-only box
-  (there is **no approval marker**; the automatic vault git-sync `git -C <vault> push` is the sole
-  exemption); `managed-settings.json` disables bypass mode, runs in `auto` mode (the gate is the
-  hook + server-side branch protection, NOT a disabled auto mode), pins managed-only rules/hooks,
-  MCP-denies merge tools, blanket-denies `git push` / `gh pr merge`, and narrowly allows only the
-  vault git-sync push; CI's **control-plane diff-guard** fails any PR touching a guardrail file
-  without the `control-plane-approved` label. (Fleet-wide the promotion gate is refspec-aware and
-  native-`ask` based — see [policy/CLAUDE.md](policy/CLAUDE.md) THE FLEET; this box is the stricter
+  (`policy/hooks/gate-push.sh`) is **REFSPEC-AWARE and fail-closed** — a feature-branch push (an
+  explicit non-`main`/`HEAD`/tag destination) falls through autonomously, but every **main-touching
+  push and every merge verb is DENIED** (this box never merges, so DENY, not `ask`). There is **no
+  approval marker**; the automatic vault git-sync `git -C <vault> push` is the sole exemption.
+  `managed-settings.json` disables bypass mode, runs in `auto` mode (the gate is the hook +
+  server-side branch protection, NOT a disabled auto mode), pins managed-only rules/hooks, and
+  MCP-denies merge tools. (The old blanket `git push` / `gh pr merge` deny rules were **REMOVED** in
+  the control-plane convergence — they also denied feature-branch pushes and muzzled this box's own
+  PR loop; the refspec-aware hook is now the sole push/merge gate.) There is **no CI control-plane
+  diff-guard** — the former `control-plane-approved` label-gate job was removed in the fleet
+  convergence (a second manual step for the same single operator that the hook + the server-side
+  `require-PR` ruleset + Arthur's merge click already cover; see the note atop `build.yml`). The
+  control-plane CLASS discipline (standalone, single-purpose, flagged-in-TLDR PRs) stays as a
+  **review convention**, not a CI job. (Fleet-wide the promotion gate is the same refspec-aware,
+  native-`ask` model — see [policy/CLAUDE.md](policy/CLAUDE.md) THE FLEET; this box is the stricter
   PR-only case.)
 
-When you edit a control-plane file in a PR, expect the CI guard to fail until a maintainer
-applies the waiver label — that is correct, not a bug. Do NOT bundle it with feature work to
+Keep every control-plane file change **standalone and single-purpose** — the discipline is a review
+convention now (no CI label-gate enforces it), so it is on you not to bundle it with feature work to
 "avoid" the guard.
 
 ## HEADLESS (binding prerequisite — EVERY variant, EVERY lineage)
@@ -99,10 +106,10 @@ One authoritative home per concept; every other mention is a one-line pointer or
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. Container user is the generic `core` (uid 1000). Credentials enter only as runtime env vars — `RDP_PW` (always) + `GUAC_PW` (always; the public Guacamole web door), with `RFB_PW` (OPTIONAL; arms the tailnet-only :5900 native-VNC mirror) + `TS_AUTHKEY` optional — and the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache Guacamole `.war` version is a Containerfile `ARG` (`GUAC_VERSION`) + its release-signing-key fingerprint (`GUAC_GPG_FP`) — bump together, after rule 4. The `guacamole-auth-ban`, `guacamole-auth-jdbc` and `guacamole-auth-totp` extensions RIDE the same `GUAC_VERSION`/`GUAC_GPG_FP` (one Apache release, one key — bump all together). (rclone + jakartaee-migration + MariaDB/`mariadb-java-client` are Fedora class-(a) packages — no version pin.) Obsidian is intentionally latest-at-build (resolved from the developer's releases API) with its sha256 logged into the build output. |
 | 7 | DEPLOY CONTRACT | Every image ships a `run.sh` that is the only sanctioned way to run it: runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the PORT-PUBLISH SET. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. **The web gateway is the ONLY public publish — `${WEB_PORT}→8443` TLS (Apache Guacamole, the sole web gate), `WEB_PORT` default 8443, changeable at spin-up. ssh (`:22`), mosh (UDP `61001-62000`), RDP (`:3389`) and VNC (`:5900`) are ALL TAILNET-ONLY — never `-p`, and additionally dropped on non-`lo`/non-`tailscale0` interfaces by the in-container `nft fd_tailnet_guard` (tailnet-only by *construction*). ssh is reached via Tailscale SSH (keyless) or ssh-key over the tailnet.** Secrets are per-door, supplied at spin-up (the host claudebox ASKS the operator — see README DEPLOY CONTRACT): `RDP_PW` (strong; system/RDP + web SSO) + `GUAC_PW` (strong; the public web door — Guacamole authenticates the public, non-tailnet door, hardened by the `guacamole-auth-ban` brute-force lockout extension + TLS), with `RFB_PW` OPTIONAL (arms the tailnet-only :5900 native-VNC mirror). Widening the publish set is a control-plane change. |
-| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, the 15th monthly (`--no-cache`), and dispatch; PRs build-validate only (no registry write). A **control-plane diff-guard** job fails any PR touching a guardrail file without the `control-plane-approved` label. Built-in token only. The IN-CONTAINER claudebox refreshes daily on its own timer; it never touches CI. |
+| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, the 15th monthly (`--no-cache`), and dispatch; PRs build-validate only (no registry write). A **no-loose-binary backstop** step (Principle 2c) fails the build if any `$PATH` binary isn't rpm-owned. (There is NO control-plane label-gate job — it was removed in the fleet convergence; see the note atop `build.yml`.) Built-in token only. The IN-CONTAINER claudebox refreshes daily on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)` plus a functional probe of each access path (web :8443 → 200 + login, RDP over tailnet, optional VNC, ssh :4444/tailnet, mosh; cloud-sync + vault-gitsync if configured). Self-validation runs in the OWN nested `CONTAINER_HOST` engine, scratch volume, NEVER bind-mounting `$HOME`/the vault, torn down at session end. Final proof is CI green + a host deploy. **Prove runtime/terminal behaviour empirically, not by reasoning:** for tmux multi-client geometry, TUI redraw, and the like, drive multiple sized PTY clients with a real harness and assert the actual bytes each client renders (a naive byte VT model mis-reads UTF-8 fills like `·` as garbage) — not just a reported window size. |
 | 9a | THROWAWAY TREE & CHURN | *(extends Principle 9 VALIDATE — binding for every build this box triggers.)* Full mechanics: `fedora-dev` `CLAUDE.md` Principle 10. Key invariants: disposable throwaway tag (never mutates the live tree), persistent dnf package cache (bind-mounted, NOT a layer), EXIT-trap teardown. **Never `--no-cache`/prune during churn.** |
-| 10 | PROMOTION GATE / PUSH SCOPE | The box is **PR-only** — it opens PRs and NEVER merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled. Enforced by `policy/hooks/gate-push.sh` + `managed-settings.json` + the CI diff-guard. The in-box agent grows `distrobox.ini`/`policy/`/scripts only by editing the LIVE clone and opening a PR. |
+| 10 | PROMOTION GATE / PUSH SCOPE | The box is **PR-only** — it opens PRs and NEVER merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled (a review convention — there is no CI label-gate). Enforced by `policy/hooks/gate-push.sh` + `managed-settings.json` + the server-side `require-PR` ruleset on `main`. The in-box agent grows `distrobox.ini`/`policy/`/scripts only by editing the LIVE clone and opening a PR. |
 
 ### Class-(c) sources — the bounded last-resort exception (fleet-wide; identical in fedora-dev + fedora-bootstrap)
 
@@ -132,7 +139,7 @@ deterministically, and is deleted. **A loose executable / script / tarball on `$
 permitted under (c)** (the existing tarball-on-PATH ban stands). Each (c) artifact gets a
 **disclosure row** in the relevant Packages table (pinned canonical URL + version + the
 signature/checksum kind), and the table's **enumeration line lists every (c) artifact in use**
-(no more "none"). **Mechanical backstop (Principle 8 CI):** the control-plane diff-guard asserts
+(no more "none"). **Mechanical backstop (Principle 8 CI):** the no-loose-binary backstop asserts
 every binary on `$PATH` resolves to an rpm (`rpm -qf`) — the "no loose binary" rule is not just
 prose.
 
@@ -486,9 +493,9 @@ Inside claudebox (`distrobox.ini`'s `additional_packages`). Refreshed daily from
 | bin/guac-db-provision.sh | **SINGLE SOURCE OF TRUTH** for Guacamole DB-backed auth + TOTP provisioning, SOURCED by ALL THREE lineage entrypoints after MariaDB is up. Holds the four TOTP/DB must-dos once (load only 001 + delete/fail-closed guacadmin; remove file-auth user-mapping.xml; non-null-parented connections + DELETE-then-INSERT grant reconciliation; password-only UPSERT that preserves the TOTP seed). All hashing is in SQL (`UNHEX(SHA2(...))`); every value hex-encoded (injection-safe). Lineage params: `RDP_SECURITY` (any/tls), `RDP_PIN_BPP` (1/0). Writes the runtime guacamole.properties (DB password — Principle 5, never baked) |
 | bin/gate-deep-probe.sh | the **deep Gate-B equivalence probe** that `.live-gate`'s `PROBE_{xrdp,grd}` invoke (run INSIDE the candidate via `podman exec`, loopback-only, as root; shipped via the existing `COPY bin/` — no Containerfile change, no new packages). Beyond the basic web `:8443`/RDP `:3389`/DB health it asserts grd↔xrdp functional equivalence at **gate-feasible depth**: the desktop SESSION is rendering (grd: `gnome-headless-session@<user>` active + compositor + GRD is the `:3389` listener; xrdp: live Xorg `:10`), the RDP-server config (grd listener; xrdp `max_bpp=24`/`autorun=Xorg`/`KillDisconnected=false`), the Guacamole jdbc+totp auth chain + the `core` DB identity (guacadmin absent), and **multi-user** per-user RDP port binding (grd USER1 `:3390`). Self-diagnosing — a failed check dumps `[FAIL]`/`SUMMARY` into the RED verdict. Does NOT prove (operator-run per `validation/GO-LIVE-VALIDATION*.md`): a real RDP-pixel frame, cross-device resume, fleet-SSH over a live tailnet |
 | policy/CLAUDE.md | runtime law for the in-claudebox agent (role, push scope, the promotion gate, secret isolation, vault/wiki governance, non-vault cloud). **CONTROL-PLANE** |
-| policy/managed-settings.json | managed-tier guardrails: deny rules (incl. blanket `git push`/`gh pr merge`), `disableBypassPermissionsMode`/`defaultMode: auto`/`allowManagedPermissionRulesOnly`/`allowManagedHooksOnly`, MCP merge-tool deny, the PreToolUse hook wiring. **CONTROL-PLANE** |
-| policy/hooks/gate-push.sh | the PROMOTION-GATE PreToolUse hook: fail-closed deny of `git push` / `gh pr merge` / `gh pr create --merge\|--squash\|--rebase\|--auto` / `gh api …/merges\|/merge` / wrapper-script variants from this PR-only box (no approval marker; the vault git-sync `git -C <vault> push` the sole exemption). Stamped into the claudebox alongside managed-settings.json. **CONTROL-PLANE** |
-| .github/workflows/build.yml | CI: build → cosign-sign → push `ghcr.io/oso-gato/fedora-desktop` on push/15th-monthly(`--no-cache`)/dispatch (PRs build-validate only) + the **control-plane diff-guard** job. **CONTROL-PLANE** |
+| policy/managed-settings.json | managed-tier guardrails: P2-source deny rules (COPR/pip/npm/cargo/gem/brew/flatpak/snap + `Write` to global `bin/`), MCP merge-tool deny, `disableBypassPermissionsMode`/`defaultMode: auto`/`allowManagedPermissionRulesOnly`/`allowManagedHooksOnly`. **No** blanket `git push`/`gh pr merge` deny — the refspec-aware `gate-push.sh` hook is the push/merge gate (the old blanket rules were removed in the control-plane convergence). **CONTROL-PLANE** |
+| policy/hooks/gate-push.sh | the PROMOTION-GATE PreToolUse hook (REFSPEC-AWARE): feature-branch pushes fall through autonomously; fail-closed deny of **main-touching** `git push` / `gh pr merge` / `gh pr create --merge\|--squash\|--rebase\|--auto` / `gh api …/merges\|/merge` / wrapper-script variants from this PR-only box (no approval marker; the vault git-sync `git -C <vault> push` the sole exemption). Stamped into the claudebox alongside managed-settings.json. **CONTROL-PLANE** |
+| .github/workflows/build.yml | CI: build → cosign-sign → push `ghcr.io/oso-gato/fedora-desktop` on push/15th-monthly(`--no-cache`)/dispatch (PRs build-validate only) + the **no-loose-binary backstop** step (Principle 2c). No control-plane label-gate job (removed in the fleet convergence). **CONTROL-PLANE** |
 
 ## NESTED BUILDS — CONTAINER_HOST BRIDGE (reference)
 
