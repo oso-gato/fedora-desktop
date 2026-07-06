@@ -158,6 +158,15 @@ The reshaped fleet definition PERMITS a provenance-clean class-(c) runtime binar
 its backstop is the clickable merge gate + the disclosure row, not this desktop-only check. So this
 job is not relaxed; it simply does not apply where a runtime binary legitimately lives.
 
+**ANTI-THEATER (doctrine — do not rebuild the sieve).** Desktop's No-loose-binary job is real because
+it inventories an actual sealed IMAGE (the true outcome). Do NOT mistake that for licence to build a
+static SCRIPT-SCAN of fetch/install patterns as a 2(c) backstop elsewhere — that is the pattern the
+fleet already de-theatered (v1.2.48 `--cap-add` denylist; `managed-settings.json` "best-effort only…
+not the boundary"). Pattern-scanning arbitrary shell is a sieve (a seventh evasion always exists); a
+guard that implies coverage it can't deliver is **worse than none**. For a fetched binary on a box with
+no image, the boundary is the **installer's OWN fail-closed verification + the disclosure row + the
+click** — never a scan. (A host static fetch-guard was built and closed for exactly this reason.)
+
 **Class-(c) artifacts in use (fedora-desktop):** `guacamole.war` (Apache `.war`, deployed into
 Fedora's Tomcat, GPG `.asc`-verified against the pinned Apache key `GUAC_GPG_FP`); `guacamole-auth-ban`
 (a SECOND Apache Guacamole artifact — its `.jar` extension dropped into `/etc/guacamole/extensions/`
