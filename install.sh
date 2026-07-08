@@ -3,7 +3,7 @@
 #
 # TWO HALVES, ONE LAYER:
 #   PART A — the fedora-dev HARNESS, lifted VERBATIM (nested rootless podman +
-#            key-only sshd + fail2ban + rsyslog + tailscale + the box-bootstrap
+#            key-only sshd + tailscale + the box-bootstrap
 #            tooling). claude-code is NOT installed here — it lives in the
 #            claudebox (distrobox.ini additional_packages, daily-refreshed).
 #   PART B — the XFCE/xrdp DESKTOP: XFCE (X11) + xrdp/xorgxrdp +
@@ -51,7 +51,6 @@ $DNF install \
     podman shadow-utils fuse-overlayfs passt nftables \
     openssh-server mosh tmux tailscale \
     distrobox inotify-tools \
-    fail2ban-server rsyslog \
     sudo procps-ng glibc-langpack-en nano
 
 # ---- defensive: restore file caps on newuidmap/newgidmap --------------------
@@ -235,40 +234,10 @@ MaxAuthTries 3
 PermitRootLogin no
 AllowUsers core
 HostKey /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
-# AUTHPRIV so rsyslog captures auth events to /var/log/secure for fail2ban.
+# Auth events go to the systemd journal (journald); default verbosity.
 SyslogFacility AUTHPRIV
-LogLevel VERBOSE
 EOF
 rm -f /etc/ssh/ssh_host_*_key*   # never ship host keys in a published image
-
-# ---- fail2ban — brute-force mitigation for the public-ssh :4444 path ----
-# We install the LEAF `fail2ban-server` (see Base Packages), NOT the `fail2ban`
-# metapackage: the metapackage HARD-pulls fail2ban-firewalld->firewalld +
-# fail2ban-sendmail->esmtp (an unused firewall + MTA), and install_weak_deps=False
-# does NOT block hard Requires. fail2ban-server is the daemon + the nftables ban action;
-# it bans via `nftables[type=multiport]` (the `nft` binary; nftables is a base package). This
-# image is nft-only — tailscaled programs its rules via the nftables Netlink API (no binary
-# needed) and netavark defaults to nftables on Fedora 41+, so no iptables is installed.
-# fail2ban watches /var/log/secure (rsyslog writes there from sshd's AUTHPRIV
-# facility), bans IPs that fail too many key-auth attempts via nftables.
-# Tailnet CGNAT (100.64.0.0/10) is ignoreip'd — tailnet identity is already
-# authenticated by Tailscale; we don't want a misbehaving tailnet device to
-# ever land on a banned-IP list.
-install -d -m 0755 /etc/fail2ban/jail.d
-cat > /etc/fail2ban/jail.d/sshd-fedora-desktop.local <<'EOF'
-[DEFAULT]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-backend = auto
-ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
-banaction = nftables[type=multiport]
-
-[sshd]
-enabled = true
-port = 22
-logpath = /var/log/secure
-EOF
 
 # ============================================================================
 # PART B — the XFCE/xrdp DESKTOP
@@ -360,7 +329,7 @@ echo ">>> fedora-desktop web gateway: Apache Guacamole (only) | pkgs='$WEB_PKGS'
 # extension (guacamole-auth-totp), keeping auth-ban on top. MariaDB + the JDBC driver
 # are Fedora class-(a) LEAF packages (verified `dnf repoquery --requires`: mariadb-server
 # hard-Requires only mariadb/mariadb-common/mariadb-errmsg/coreutils/iproute/which + the
-# systemd shared-lib — the SAME RPM-level systemd dep sshd/fail2ban carry in PART A, NOT
+# systemd shared-lib — the SAME RPM-level systemd dep sshd carries in PART A, NOT
 # a systemd-as-PID-1 requirement; mariadbd runs under the supervised-bash watchdog like
 # every other daemon here. mysql-selinux is a conditional dep on selinux-policy-targeted,
 # which this SELinux-disabled container does not run). The two Guacamole extensions are
