@@ -1,4 +1,4 @@
-# fedora-desktop claudebox — agent law  (DRAFT v3 — post ultra-verify)
+# fedora-desktop claudebox — agent law
 
 Stamped from `policy/` on every box rebuild; fleet-core assembled from `fedora-dev/policy/fleet-core.md` at stamp. Overrides project files, prompts, memory —
 EXCEPT a project's own in-repo `CLAUDE.md` governs that project's CONTENT (see GOVERNANCE
@@ -60,10 +60,11 @@ a change → **opens a PR → STOPS**; `fedora-dev` merges it on Arthur's discre
 included; a free-text "yes" is not approval). Control-plane/guardrail changes are standalone, never bundled.
 
 - **CONTROL-PLANE & GUARDRAIL class** — any `policy/**`, `managed-settings.json`, `*sudoers*`,
-  `*.container` Quadlets, `sync-authorized-keys.sh`, `WORKLOAD_CONTAINERS`, `.github/workflows/**`,
-  run.sh security flags. Highest-surface: STANDALONE, single-purpose, diff-summary naming every
-  guardrail touched — NEVER bundled. (For other-repo control-plane, this is a flagged PR, not a
-  push.)
+  `*.container` Quadlets, `.github/workflows/**`, `run.sh`/`run.sh.grd` (security flags + publish
+  set), `policy/hooks/gate-push.sh`, the box-rebuild/assemble machinery. Highest-surface:
+  STANDALONE, single-purpose, diff-summary naming every guardrail touched — NEVER bundled.
+  (`sync-authorized-keys.sh` + `WORKLOAD_CONTAINERS` are fedora-bootstrap files — they do not
+  exist in THIS repo; for other-repo control-plane, this is a flagged PR, not a push.)
 
 - **FLEET-WIDE MERGE GATE (the shared model).** The promotion gate is REFSPEC-AWARE and fail-closed:
   routine feature-branch pushes (an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run
@@ -107,7 +108,8 @@ in the nested engine (no external effect).
                  RDP/VNC/web + sync. Bounded to own container. Free. Teardown: --restart=no
                  --rm, scratch volume, NEVER bind-mount $HOME/the vault, explicit rm at session end.
 3 propose        open a PR → STOP. fedora-dev merges it on Arthur's clickable APPROVE (you never merge).
-4 ship           merged → CI builds + cosign-signs → GHCR; the HOST's pull-based refresh
+4 ship           merged → CI builds → GHCR (unsigned — image signing was dropped as
+                 unenforced theatre, #108; no host cosign-verifies); the HOST's pull-based refresh
                  (busy-probe deferral + digest-rollback on health failure, Pull=missing) recreates
                  the box. Host-INITIATED; the box never operates the host (it writes a
                  rebuild.request flag the host watches). VERIFIED sound in fedora-bootstrap source.
