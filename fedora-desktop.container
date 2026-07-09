@@ -100,12 +100,17 @@ Volume=fedora-desktop-db:/var/lib/mysql
 PublishPort=8443:8443
 
 # Runtime secrets — supplied per-door at spin-up (the host claudebox ASKS the
-# operator; see README DEPLOY CONTRACT). Preferred: podman secrets surfaced as env
-# (uncomment after `podman secret create fedora-desktop-<name> -`).
+# operator; see README DEPLOY CONTRACT). PREFERRED: the SAME single mount-secret
+# run.sh creates (restart-safe — survives crash/restart/reboot; values never in
+# `podman inspect`; the entrypoint sources the mounted file). Create it once:
+#   printf 'RDP_PW=…\nGUAC_PW=…\n' | podman secret create fedora-desktop-secrets -
+# then uncomment:
+#   Secret=fedora-desktop-secrets,type=mount,target=/etc/fedora-desktop/secrets.env,mode=0400
 #   RDP_PW   REQUIRED — core's system/RDP password (STRONG; the RDP door + the web SSO).
 #   GUAC_PW  REQUIRED for the guacamole gateway — the PUBLIC web password (STRONG).
 #   RFB_PW   OPTIONAL — the tailnet-only :5900 native-VNC mirror password (else it
 #            falls back to RDP_PW). Not a public door; noVNC was removed fleet-wide.
+# ALTERNATIVE (env back-compat in the entrypoint) — per-var env secrets:
 #   Secret=fedora-desktop-rdp-pw,type=env,target=RDP_PW
 #   Secret=fedora-desktop-guac-pw,type=env,target=GUAC_PW
 #   Secret=fedora-desktop-rfb-pw,type=env,target=RFB_PW
