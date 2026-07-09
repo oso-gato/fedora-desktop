@@ -14,10 +14,12 @@
 #   GUAC_PW  (required) Guacamole web-login password
 #   RFB_PW   (optional) arms the :5900 same-session VNC mirror (tailnet-only)
 #   TS_AUTHKEY (optional) unattended tailnet join
-# Provide them as podman secrets (preferred) — `podman secret create
-# fedora-desktop-rdp-pw -` etc. — and mount them as env via the Secret= lines
-# below, OR via an operator-managed EnvironmentFile (NOT committed). The
-# entrypoint fails fast when RDP_PW or GUAC_PW is missing.
+# Provide them via podman secrets. PREFERRED: the single mount-secret run.sh
+# also uses (`printf 'RDP_PW=…\nGUAC_PW=…\n' | podman secret create
+# fedora-desktop-secrets -`, surfaced at /etc/fedora-desktop/secrets.env by the
+# Secret= line in [Container]). Alternatives: per-var env secrets or an
+# operator-managed EnvironmentFile (NOT committed) — the entrypoint has env
+# back-compat. It fails fast when RDP_PW or GUAC_PW is missing.
 
 [Unit]
 Description=fedora-desktop — XFCE remote workstation for the vault/wiki + maintainer dev
@@ -100,19 +102,26 @@ Volume=fedora-desktop-db:/var/lib/mysql
 PublishPort=8443:8443
 
 # Runtime secrets — supplied per-door at spin-up (the host claudebox ASKS the
-# operator; see README DEPLOY CONTRACT). Preferred: podman secrets surfaced as env
-# (uncomment after `podman secret create fedora-desktop-<name> -`).
+# operator; see README DEPLOY CONTRACT). PREFERRED: the SAME single mount-secret
+# run.sh creates (restart-safe — survives crash/restart/reboot; values never in
+# `podman inspect`; the entrypoint sources the mounted file). Create it once:
+#   printf 'RDP_PW=…\nGUAC_PW=…\n' | podman secret create fedora-desktop-secrets -
+# then uncomment:
+#   Secret=fedora-desktop-secrets,type=mount,target=/etc/fedora-desktop/secrets.env,mode=0400
 #   RDP_PW   REQUIRED — core's system/RDP password (STRONG; the RDP door + the web SSO).
 #   GUAC_PW  REQUIRED for the guacamole gateway — the PUBLIC web password (STRONG).
 #   RFB_PW   OPTIONAL — the tailnet-only :5900 native-VNC mirror password (else it
 #            falls back to RDP_PW). Not a public door; noVNC was removed fleet-wide.
+# ALTERNATIVE (env back-compat in the entrypoint) — per-var env secrets:
 #   Secret=fedora-desktop-rdp-pw,type=env,target=RDP_PW
 #   Secret=fedora-desktop-guac-pw,type=env,target=GUAC_PW
 #   Secret=fedora-desktop-rfb-pw,type=env,target=RFB_PW
 #   Secret=fedora-desktop-ts-authkey,type=env,target=TS_AUTHKEY
 # Multi-user (optional) — up to 5 additional desktop users. Each gets their OWN Guacamole
 # web login (USERn_NAME/USERn_PW) → their OWN Desktop + only the fleet tiles their grant
-# (USERn_ACCESS = none|dev|host|both) allows + their own home volume (above). core stays
+# (USERn_ACCESS = none | all | comma-list of tile hostnames, e.g. 'fedora-dev,onyx' —
+# the legacy dev/host/both vocabulary grants NOTHING, the matcher is exact-token
+# fail-closed) allows + their own home volume (above). core stays
 # the admin; a user is non-priv (no sudo/podman/claudebox). The entrypoint create-or-updates
 # them idempotently at boot. UNCOMMENT a trio per user (n = 1..5):
 #   Secret=fedora-desktop-user1-name,type=env,target=USER1_NAME

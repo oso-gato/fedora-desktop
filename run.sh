@@ -96,12 +96,20 @@ ENABLE_SHARED="${ENABLE_SHARED:-}"; SHARED_VOL=()
 # (never published; reached over the tailnet IP / Tailscale SSH).
 WEB_PORT="${WEB_PORT:-8443}"
 
-# Secrets reach the entrypoint via a bind-mounted, 0600 secrets.env — NOT `podman
-# -e`, which would persist RDP_PW/GUAC_PW in `podman inspect` + /proc/1/environ for
-# the container's whole life. The entrypoint SOURCES this into shell vars (never
-# exported, so never in PID 1's environ) and unsets them after use — parity with
-# the grd lineages, which already moved off `-e`.
-SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
+# Secrets reach the entrypoint via a podman SECRET mounted at /etc/fedora-desktop/
+# secrets.env — NOT `podman -e` (which would persist RDP_PW/GUAC_PW in `podman
+# inspect` + /proc/1/environ for the container's whole life), and NOT a bind-mounted
+# tempfile: deleting the mktemp source after `podman run` DEFEATED --restart=always
+# (podman re-resolves bind sources on every start, so the first crash/restart/reboot
+# died on the missing /tmp path — the heal loop could never heal; proven in-box).
+# The secret lives in the rootless secret store (survives restarts + host reboots);
+# `podman inspect` shows its name/ID only, never the values. The entrypoint SOURCES
+# the mounted file into shell vars (never exported, so never in PID 1's environ)
+# and unsets them after use. A container keeps its create-time copy across
+# replaces; to redeploy with NEW values run `podman rm -f fedora-desktop` first,
+# then re-run this script (a bare re-run replaces the stored secret but then
+# stops at `podman run` — the container name is already in use).
+SECRET_NAME=fedora-desktop-secrets
 { printf 'RDP_PW=%q\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
@@ -111,7 +119,7 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
   for _i in 1 2 3 4 5; do
     eval "_un=\${USER${_i}_NAME:-}; _up=\${USER${_i}_PW:-}; _ua=\${USER${_i}_ACCESS:-none}"
     [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%q\nUSER%s_PW=%q\nUSER%s_ACCESS=%q\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
-  done; } > "$SECRETS"
+  done; } | podman secret create --replace "$SECRET_NAME" - >/dev/null
 
 podman run -d --name fedora-desktop \
     --hostname fedora-desktop \
@@ -123,7 +131,7 @@ podman run -d --name fedora-desktop \
     --device /dev/net/tun \
     --device /dev/fuse \
     --security-opt label=disable \
-    -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
+    --secret source=${SECRET_NAME},type=mount,target=/etc/fedora-desktop/secrets.env,mode=0400 \
     "${KEY_MOUNT[@]}" \
     "${USER_VOLS[@]}" \
     "${SHARED_VOL[@]}" \
@@ -135,7 +143,6 @@ podman run -d --name fedora-desktop \
     --health-cmd "bash -c '[ \$(curl -sk -o /dev/null -w %{http_code} ${HEALTH_URL}) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/${BACKEND_PORT} && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping'" \
     --health-interval 30s --health-timeout 5s --health-retries 3 --health-start-period 60s \
     "$IMAGE"
-rm -f "$SECRETS"   # host copy gone; the bind-mount keeps it readable to PID 1 only (0700 dir)
 
 # ---- operator-facing access info (OUTPUT ONLY — no security flag / publish-set / device change) ----
 # Public IP for the web URL: prefer THIS host's own routable source IP; only ask the publisher's

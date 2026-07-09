@@ -10,8 +10,9 @@
 #   a SINGLE credential SSOs straight to that user's painted desktop; Apache Guacamole
 #   fronts each user's loopback port as the public :8443 door.
 #
-# Secrets reach this oneshot via the unit EnvironmentFile (run.sh.grd writes
-# /etc/fedora-desktop/secrets.env). PRINCIPLE 5 — runtime only, never a layer.
+# Secrets reach this oneshot via the unit EnvironmentFile at
+# /etc/fedora-desktop/secrets.env (a podman SECRET run.sh.grd creates + mounts
+# there). PRINCIPLE 5 — runtime only, never a layer.
 #   RDP_PW   — ALWAYS: core's system + GRD RDP credential (Guacamole SSOs core with it)
 #   GUAC_PW  — ALWAYS: core's PUBLIC Guacamole web-login password (+TOTP, +auth-ban)
 #   USER{1..5}_NAME/_PW/_ACCESS — OPTIONAL additional desktop users (multi-user)

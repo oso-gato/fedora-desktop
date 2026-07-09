@@ -34,7 +34,8 @@ set -eu
 # timeout.
 trap 'kill -TERM 0 2>/dev/null; exit 0' TERM INT
 
-# ---- secrets: sourced from the bind-mounted 0600 secrets.env (run.sh writes it,
+# ---- secrets: sourced from the secret-mounted 0400 secrets.env (run.sh creates
+# the podman secret it mounts,
 # NOT `podman -e`, so RDP_PW/GUAC_PW never land in PID 1's /proc/1/environ or
 # `podman inspect`). They become SHELL vars here (never exported), are consumed
 # below, then unset — parity with the grd lineages. (Back-compat: an old

@@ -68,11 +68,17 @@ done
 ENABLE_SHARED="${ENABLE_SHARED:-}"; SHARED_VOL=()
 [ -n "$ENABLE_SHARED" ] && SHARED_VOL=(-v fedora-desktop-grd-shared:/home/shared)
 
-# Secrets reach the first-boot oneshot via a bind-mounted EnvironmentFile (the
-# fedora-desktop-grd-firstboot.service reads /etc/fedora-desktop/secrets.env). entrypoint-grd.sh
-# provisions core + USER{1..5} and per-user GRD headless sessions; guac-db-provision emits the
-# per-user Guacamole tiles + the FLEET_SSH bastion tiles + the access-grant matrix.
-SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
+# Secrets reach the first-boot oneshot via a podman SECRET mounted at
+# /etc/fedora-desktop/secrets.env (the fedora-desktop-grd-firstboot.service
+# EnvironmentFile-reads it) — NOT a bind-mounted mktemp file: deleting the source
+# after `podman run` DEFEATED --restart=always (podman re-resolves bind sources on
+# every start, so the first crash/restart/reboot died on the missing /tmp path —
+# proven in-box), and the firstboot oneshot re-reads this file on EVERY boot. The
+# secret survives restarts + host reboots; `podman inspect` shows name/ID only.
+# entrypoint-grd.sh provisions core + USER{1..5} and per-user GRD headless sessions;
+# guac-db-provision emits the per-user Guacamole tiles + the FLEET_SSH bastion tiles
+# + the access-grant matrix.
+SECRET_NAME=fedora-desktop-grd-secrets
 { printf 'RDP_PW=%q\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"
   [ -n "$RFB_PW" ]     && printf 'RFB_PW=%q\n'  "$RFB_PW"
@@ -82,7 +88,7 @@ SECRETS="$(mktemp)"; chmod 600 "$SECRETS"
   for _i in 1 2 3 4 5; do
     eval "_un=\${USER${_i}_NAME:-}; _up=\${USER${_i}_PW:-}; _ua=\${USER${_i}_ACCESS:-none}"
     [ -n "$_un" ] && [ -n "$_up" ] && printf 'USER%s_NAME=%q\nUSER%s_PW=%q\nUSER%s_ACCESS=%q\n' "$_i" "$_un" "$_i" "$_up" "$_i" "$_ua"
-  done; } > "$SECRETS"
+  done; } | podman secret create --replace "$SECRET_NAME" - >/dev/null
 
 podman run -d --name fedora-desktop-grd \
     --hostname fedora-desktop-grd \
@@ -95,7 +101,7 @@ podman run -d --name fedora-desktop-grd \
     --cap-add NET_ADMIN --cap-add SYS_ADMIN \
     --device /dev/net/tun --device /dev/fuse \
     --security-opt label=disable \
-    -v "$SECRETS":/etc/fedora-desktop/secrets.env:ro \
+    --secret source=${SECRET_NAME},type=mount,target=/etc/fedora-desktop/secrets.env,mode=0400 \
     "${KEY_MOUNT[@]}" \
     "${USER_VOLS[@]}" \
     "${SHARED_VOL[@]}" \
@@ -105,9 +111,18 @@ podman run -d --name fedora-desktop-grd \
     -v fedora-desktop-grd-db:/var/lib/mysql \
     -p ${WEB_PORT}:8443 \
     --health-cmd "bash -c \"[ \$(curl -sk -o /dev/null -w %{http_code} https://127.0.0.1:8443${HEALTH_PATH}) = 200 ] && exec 3<>/dev/tcp/127.0.0.1/3389 && mariadb-admin --socket=/var/lib/mysql/mysql.sock ping\"" \
-    --health-interval 30s --health-timeout 5s --health-retries 3 --health-start-period 90s \
+    --health-interval 30s --health-timeout 5s --health-retries 3 --health-start-period 600s \
     "$IMAGE"
-rm -f "$SECRETS"
+# --health-start-period 600s (was 90s): first boot legitimately runs the firstboot
+# oneshot to completion BEFORE Tomcat (Requires=firstboot) can serve :8443 — its
+# own budget is TimeoutStartSec=600 (up to 5 per-user session-bus polls @40s +
+# mariadb init/upgrade + tailscale retries). At 90s a GOOD slow multi-user first
+# boot reported (unhealthy) while provisioning correctly — a false status that
+# misleads operators, breaks any Notify=healthy-style readiness consumer, and
+# would trigger digest-rollback if grd is ever enrolled in the host refresh
+# harness (it is not today; xrdp's refresh-wired Quadlet keeps its own 60s).
+# Steady-state is unaffected (start-period only defers failure-counting; the
+# first passing check still flips healthy immediately).
 
 # ---- operator-facing access info (OUTPUT ONLY — no security flag / publish-set / device change) ----
 # Public IP for the web URL: prefer this host's routable source IP; ask api.ipify.org only when
