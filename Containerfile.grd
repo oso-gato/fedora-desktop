@@ -54,7 +54,11 @@ COPY --chmod=755 entrypoint-grd.sh /usr/local/bin/entrypoint-grd.sh
 COPY distrobox.ini claudebox-init.sh box-rebuild.sh claudebox-daily.sh \
      claudebox-assemble.sh README.md CLAUDE.md /usr/local/share/fedora-dev/
 COPY policy/ /usr/local/share/fedora-dev/policy/
-COPY --chmod=755 bin/claude bin/claudebox-rebuild /usr/local/bin/
+# 0750 core:core — parity with the xrdp lineage (Containerfile): the NON-DEV
+# LOCKDOWN contract makes the claude/claudebox-rebuild wrappers core-only; a
+# world-executable copy let non-privileged desktop users exec them (only the
+# 0700 podman-socket dir backstopped it).
+COPY --chown=core:core --chmod=750 bin/claude bin/claudebox-rebuild /usr/local/bin/
 COPY bin/ /usr/local/share/fedora-dev/bin/
 COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 

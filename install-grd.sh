@@ -517,7 +517,10 @@ install -d -m 0750 -o tomcat -g tomcat /etc/guacamole /var/lib/guac-cert
 # authoritative DB-auth/TOTP config incl. the runtime DB password) — not baked here.
 # Guacamole fronts GRD's LOOPBACK RDP (127.0.0.1:3389, security=tls). The web
 # user-mapping (creds + the GRD TLS params) is written at first boot by
-# entrypoint-grd (it needs the runtime RDP_PW/GUAC_PW). TLS :8443 connector:
+# entrypoint-grd (it needs the runtime RDP_PW/GUAC_PW). TLS :8443 connector —
+# fail fast if the stock </Service> anchor ever disappears (a silent sed no-op
+# here would only surface later as an opaque no-:8443-listener health RED):
+grep -q '</Service>' /etc/tomcat/server.xml || { echo 'FATAL: /etc/tomcat/server.xml has no </Service> anchor — TLS connector injection would no-op'; exit 1; }
 sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
 
 # ---- guacamole-auth-ban: brute-force lockout on the PUBLIC :8443 door --------

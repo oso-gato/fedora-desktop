@@ -296,7 +296,7 @@ fi
 # HARNESS: sshd + tailscaled
 # ============================================================================
 
-# ---- sshd: container :22 (host publishes public :4444 via Quadlet/run.sh) ----
+# ---- sshd: container :22 — TAILNET-ONLY, never published (web door is the sole -p) ----
 /usr/sbin/sshd
 
 # ---- tailscaled --------------------------------------------------------------
@@ -353,11 +353,10 @@ NFT
 
 # ---- xrdp (RDP :3389, tailnet-only) — owns the Xorg :10 session -------------
 mkdir -p /var/run/xrdp
+# (no PID capture — the watchdog tracks both daemons by name via pgrep)
 /usr/sbin/xrdp-sesman --nodaemon &
-sesman_pid=$!
 sleep 1
 /usr/sbin/xrdp --nodaemon &
-xrdp_pid=$!
 
 # ---- boot-time session bootstrap --------------------------------------------
 # Pre-create the Xorg :10 session so the Guacamole web door (and the optional VNC
@@ -392,8 +391,10 @@ runuser -u tomcat -- env NAME=tomcat CATALINA_BASE=/usr/share/tomcat \
 # is TAILNET-ONLY, NEVER published. VncAuth: only the first 8 chars of RFB_PW are
 # effective — fine for a tailnet-only door (the PUBLIC door is Guacamole only).
 # The boot-time bootstrap (above) pre-creates :10. The respawn loop's PID is tracked by
-# the watchdog (x0vnc_pid) so a LOOP death trips --restart=always; run.sh's health
-# probe also checks the live :5900 backend, not just the door page.
+# the watchdog (x0vnc_pid) so a LOOP death trips --restart=always. NOTE: run.sh's
+# health probe does NOT check :5900 (it probes web :8443 + RDP :3389 + DB only) —
+# the mirror's only supervision is this loop-PID check; a hung x0vncserver with a
+# live loop is not detected. Optional door, tailnet-only — accepted.
 if [ -n "${RFB_PW:-}" ]; then
     printf '%s' "$RFB_PW" | runuser -u core -- vncpasswd -f > /home/core/.vncpasswd_rfb
     chown core:core /home/core/.vncpasswd_rfb && chmod 600 /home/core/.vncpasswd_rfb

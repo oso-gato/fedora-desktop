@@ -112,7 +112,8 @@ EOF
 # ---- surface the Tailscale interactive login on remote logins until the node
 # is on the tailnet. A fresh state volume has no persisted identity, so the
 # one-time browser join has to happen somewhere — and a freshly-deployed box has
-# no shell without either the public :4444 ssh door or the tailnet. Print the
+# no shell without the tailnet (ssh is TAILNET-ONLY; nothing but the web door is
+# ever published — see run.sh's ACCESS MODEL). Print the
 # live login URL on each interactive login until connected. Runs BEFORE the tmux
 # attach below (tmux redraws the screen and would hide it); sorts first by filename.
 cat > /etc/profile.d/zz-tailscale-login.sh <<'EOF'
@@ -219,11 +220,12 @@ bind-key g {
 }
 EOF
 
-# ---- sshd (key-only; reachable via tailnet :22 AND host-published public :4444)
+# ---- sshd (key-only; TAILNET-ONLY :22 — NEVER published; an earlier draft's
+# "public :4444" door was dropped and the web gateway is the sole -p publish)
 # Host keys live on the root-owned tailscale state volume (NOT under core's
 # home — core owns that tree and could swap keys) and are generated at runtime.
-# Public ssh on port 4444 is published by the Quadlet/run.sh; container sshd
-# listens on 22. Keys for core are synced from github.com/oso-gato.keys by the
+# Container sshd listens on 22, reached over the tailnet IP / Tailscale SSH.
+# Keys for core are synced from github.com/oso-gato.keys by the
 # entrypoint at every container start (cached on the home volume so GitHub
 # being briefly unreachable doesn't lock the operator out).
 cat > /etc/ssh/sshd_config.d/99-fedora-desktop.conf <<'EOF'
@@ -234,8 +236,10 @@ MaxAuthTries 3
 PermitRootLogin no
 AllowUsers core
 HostKey /var/lib/tailscale/hostkeys/ssh_host_ed25519_key
-# Auth events go to the systemd journal (journald); default verbosity.
-SyslogFacility AUTHPRIV
+# NOTE: this no-systemd container has NO syslog/journald — sshd auth events are
+# not persisted anywhere (the old SyslogFacility line + "goes to journald" claim
+# implied an audit trail that does not exist). Acceptable: the door is key-only
+# + tailnet-only. Do not add logging config here without adding a real log sink.
 EOF
 rm -f /etc/ssh/ssh_host_*_key*   # never ship host keys in a published image
 
@@ -418,10 +422,15 @@ rm -rf "$GNUPGHOME"; unset GNUPGHOME
 javax2jakarta /tmp/guacamole.war /var/lib/tomcat/webapps/guacamole.war
 rm -f /tmp/guacamole.war /tmp/guacamole.war.asc /tmp/guac-KEYS
 install -d -m 0750 -o tomcat -g tomcat /etc/guacamole
-# guacd loopback + TIGHTENED auth-ban (3 failed attempts -> 15-min IP ban, stricter than
-# the 5/5-min default): the brute-force backstop behind spin-up.sh's strong-passphrase floor.
-printf 'guacd-hostname: 127.0.0.1\nguacd-port: 4822\nban-max-invalid-attempts: 3\nban-address-duration: 900\n' > /etc/guacamole/guacamole.properties
+# guacamole.properties is NOT baked here: bin/guac-db-provision.sh writes the
+# whole runtime file (guacd loopback, the TIGHTENED 3-attempt/900s auth-ban, the
+# JDBC wiring + DB password) on EVERY boot — a build-time copy never served a
+# request and could only drift from that single runtime authority.
 # TLS connector :8443 for the web door (PKCS12 keystore minted at runtime; entrypoint).
+# NOTE: sed-anchored on the stock </Service> — if Fedora's tomcat reshapes
+# server.xml this becomes a silent no-op; the runtime symptom is no :8443
+# listener (health RED). Fail fast at build instead:
+grep -q '</Service>' /etc/tomcat/server.xml || { echo 'FATAL: /etc/tomcat/server.xml has no </Service> anchor — TLS connector injection would no-op'; exit 1; }
 sed -i 's|</Service>|    <Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol" SSLEnabled="true" maxThreads="50" scheme="https" secure="true">\n        <SSLHostConfig><Certificate certificateKeystoreFile="/var/lib/guac-cert/keystore.p12" certificateKeystorePassword="container-local" type="RSA"/></SSLHostConfig>\n    </Connector>\n  </Service>|' /etc/tomcat/server.xml
 
 # ---- guacamole-auth-ban: brute-force lockout on the PUBLIC :8443 door --------

@@ -121,18 +121,22 @@ check(){ local u="$1" exp="$2" got; got="$(tiles_for "$u")"
 
 echo "=== Scenario 1: initial grant matrix (FLEET_SSH = dev + vps) ==="
 export FLEET_SSH="dev fedora-dev 22 core;vps erebus 22 core"
+# ACCESS uses the SHIPPED vocabulary: none | all | comma-list of tile LABELS
+# (exact whole-token match, fail-closed). The retired dev/host/both category
+# words grant NOTHING — the old S1/S2 expectations encoded them and therefore
+# FAILED against correct code (half-migrated when S3 got the #43 update).
 export USER1_NAME=alice USER1_PW='alice-pw-0123456789' USER1_ACCESS=none
 export USER2_NAME=bob   USER2_PW='bob-pw-0123456789'   USER2_ACCESS=dev
-export USER3_NAME=carol USER3_PW='carol-pw-0123456789' USER3_ACCESS=host
-export USER4_NAME=dave  USER4_PW='dave-pw-0123456789'  USER4_ACCESS=both
+export USER3_NAME=carol USER3_PW='carol-pw-0123456789' USER3_ACCESS=vps
+export USER4_NAME=dave  USER4_PW='dave-pw-0123456789'  USER4_ACCESS=all
 ( guac_db_provision ) >/tmp/prov1.log 2>&1 || { echo "FATAL: provision S1 failed"; tail -30 /tmp/prov1.log; exit 1; }
 check core  "ssh-dev,ssh-vps"   # admin: all tiles
 check alice ""                   # none: zero fleet tiles
-check bob   "ssh-dev"            # dev: dev tile only
-check carol "ssh-vps"            # host: vps tile only
-check dave  "ssh-dev,ssh-vps"    # both: dev + vps
+check bob   "ssh-dev"            # label 'dev': that tile only
+check carol "ssh-vps"            # label 'vps': that tile only
+check dave  "ssh-dev,ssh-vps"    # all: every tile (the 'all' path, previously untested)
 
-echo "=== Scenario 2: DOWNGRADE dave both->dev (ssh-vps MUST be revoked) ==="
+echo "=== Scenario 2: DOWNGRADE dave all->dev (ssh-vps MUST be revoked) ==="
 export USER4_ACCESS=dev
 ( guac_db_provision ) >/tmp/prov2.log 2>&1 || { echo "FATAL: re-provision S2 failed"; tail -30 /tmp/prov2.log; exit 1; }
 check dave  "ssh-dev"            # the stale ssh-vps grant must be GONE (reconciliation)
@@ -154,7 +158,7 @@ echo "======================================================================"
 echo "[guac-fleet] grant-matrix gates: PASS=$P FAIL=$F (S1 5 checks + S2 3 checks)"
 if [ "$F" = 0 ]; then
   echo "[guac-fleet] VERDICT: fleet tile/grant provisioning is CORRECT — the access matrix"
-  echo "             (none/dev/host/both) and the both->dev downgrade-revoke both hold."
+  echo "             (none / all / comma-list of tile labels) and the all->dev downgrade-revoke hold."
   echo "             (The tile actually opening a shell on dev/VPS OVER TAILSCALE is"
   echo "             real-deploy-only — see GO-LIVE-VALIDATION.md section B.)"
   exit 0
