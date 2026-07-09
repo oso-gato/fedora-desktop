@@ -105,8 +105,10 @@ WEB_PORT="${WEB_PORT:-8443}"
 # The secret lives in the rootless secret store (survives restarts + host reboots);
 # `podman inspect` shows its name/ID only, never the values. The entrypoint SOURCES
 # the mounted file into shell vars (never exported, so never in PID 1's environ)
-# and unsets them after use. A container keeps its create-time copy across replaces;
-# re-running this script re-creates the secret AND the container together.
+# and unsets them after use. A container keeps its create-time copy across
+# replaces; to redeploy with NEW values run `podman rm -f fedora-desktop` first,
+# then re-run this script (a bare re-run replaces the stored secret but then
+# stops at `podman run` — the container name is already in use).
 SECRET_NAME=fedora-desktop-secrets
 { printf 'RDP_PW=%q\n' "$RDP_PW"
   [ -n "$GUAC_PW" ]    && printf 'GUAC_PW=%q\n' "$GUAC_PW"

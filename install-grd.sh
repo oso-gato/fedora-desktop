@@ -638,8 +638,8 @@ EOF
 
 # ---- first-boot config oneshot (users, TLS, per-user GRD, DB-auth) ----------
 # entrypoint-grd.sh runs ONCE under systemd; it reads the runtime secrets from the
-# bind-mounted /etc/fedora-desktop/secrets.env (run.sh.grd writes it — grd is
-# run.sh.grd-only, there is NO grd Quadlet). It provisions core +
+# secret-mounted /etc/fedora-desktop/secrets.env (run.sh.grd creates the podman
+# secret it mounts — grd is run.sh.grd-only, there is NO grd Quadlet). It provisions core +
 # optional USER{1..5}, then per user enables gnome-headless-session@<user> + the
 # user's gnome-remote-desktop-headless on a distinct loopback port — see entrypoint-grd.
 # Ordered After=gdm.service so the session FACTORY is up before it spawns sessions.
@@ -656,9 +656,10 @@ RemainAfterExit=yes
 # ~40s each) + mariadb first-init + the bounded tailscale retry (~30s) + mariadb-upgrade; the
 # 90s systemd default would SIGTERM it mid-provision and tomcat (Requires=) would never serve :8443.
 TimeoutStartSec=600
-# Secrets reach this oneshot ONLY via the bind-mounted secrets.env (run.sh.grd writes it;
-# grd is run.sh.grd-only — there is NO grd Quadlet). The dead /run/.containerenv import was
-# removed — it invited the `podman -e` path that leaks secrets to `podman inspect`.
+# Secrets reach this oneshot ONLY via the secret-mounted secrets.env (a podman
+# secret run.sh.grd creates + mounts; grd is run.sh.grd-only — there is NO grd
+# Quadlet). The dead /run/.containerenv import was removed — it invited the
+# `podman -e` path that leaks secrets to `podman inspect`.
 EnvironmentFile=-/etc/fedora-desktop/secrets.env
 ExecStart=/usr/local/bin/entrypoint-grd.sh
 [Install]
@@ -667,7 +668,7 @@ EOF
 systemctl enable fedora-desktop-grd-firstboot.service
 
 # ---- bake the lineage markers (headless GNOME-Wayland) ----------------------
-# 0700 root: this dir is the bind-mount point for the runtime secrets.env (RDP_PW
+# 0700 root: this dir is the secret-mount point for the runtime secrets.env (RDP_PW
 # etc.) — keep it non-traversable so only root (PID 1 / the oneshot) can read it.
 install -d -m 0700 /etc/fedora-desktop
 printf 'grd\n'           > /etc/fedora-desktop/lineage
