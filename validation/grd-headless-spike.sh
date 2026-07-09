@@ -237,13 +237,20 @@ probe() {
     DISPLAY=:98 "$frdp" /v:127.0.0.1:"$HOSTPORT" /u:core /p:"$TESTPW" /cert:ignore /sec:nla \
         /size:1280x720 ${GFX_TWEAK:-} > "$od/freerdp-reconnect.log" 2>&1 & local rpid2=$!
     sleep 10; kill "$rpid2" "$xpid2" >/dev/null 2>&1
-    xc "$ct" loginctl list-sessions > "$od/loginctl-2.txt" 2>&1 || true
-    sid2=$(awk '/core/{print $1; exit}' "$od/loginctl-2.txt" 2>/dev/null)
-    nsess=$(grep -c ' core ' "$od/loginctl-2.txt" 2>/dev/null || echo 0)
-    if [ -n "$sid1" ] && [ "$sid1" = "$sid2" ] && [ "$nsess" -le 1 ]; then
-      RESULT["$v:E"]=PASS; log "[$v] Gate E: reconnect RESUMED the same session (id=$sid1, no fork)"
+    # The reconnect must have actually CONNECTED — same-sid + no-fork also holds
+    # trivially when the client never reached the server, which would fake a PASS.
+    if ! grep -qiE 'connected to|negotiat|channel|licens|surface|gfx' "$od/freerdp-reconnect.log"; then
+      RESULT["$v:E"]=FAIL
+      warn "[$v] Gate E: the reconnect client shows NO connect evidence (see freerdp-reconnect.log) — cannot claim resume"
     else
-      RESULT["$v:E"]=FAIL; warn "[$v] Gate E: reconnect did NOT resume (sid1=$sid1 sid2=$sid2 core-sessions=$nsess)"
+      xc "$ct" loginctl list-sessions > "$od/loginctl-2.txt" 2>&1 || true
+      sid2=$(awk '/core/{print $1; exit}' "$od/loginctl-2.txt" 2>/dev/null)
+      nsess=$(grep -c ' core ' "$od/loginctl-2.txt" 2>/dev/null); nsess=${nsess:-0}
+      if [ -n "$sid1" ] && [ "$sid1" = "$sid2" ] && [ "$nsess" -le 1 ]; then
+        RESULT["$v:E"]=PASS; log "[$v] Gate E: reconnect RESUMED the same session (id=$sid1, no fork)"
+      else
+        RESULT["$v:E"]=FAIL; warn "[$v] Gate E: reconnect did NOT resume (sid1=$sid1 sid2=$sid2 core-sessions=$nsess)"
+      fi
     fi
   else RESULT["$v:E"]=SKIP; fi
 
