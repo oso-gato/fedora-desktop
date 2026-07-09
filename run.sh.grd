@@ -42,7 +42,8 @@ set -eu
 : "${RDP_PW:?set RDP_PW (core system + GRD RDP password)}"
 : "${GUAC_PW:?set GUAC_PW (the PUBLIC Guacamole web-login password — use a strong one)}"
 HEALTH_PATH="/guacamole/"
-# Default to the CI-published, cosign-signed GHCR image (CI tags the grd lineage `:grd`; only
+# Default to the CI-published GHCR image (unsigned — signing dropped as unenforced, #108;
+# CI tags the grd lineage `:grd`; only
 # xrdp gets `:latest`). The host never builds locally, so a `localhost/...` default left a direct
 # `./run.sh.grd` (the non-interactive contract, bypassing spin-up) pointing at an image that does
 # not exist on a fresh host. With `--pull=newer` below, this default fetches the current `:grd`.
