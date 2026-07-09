@@ -469,7 +469,8 @@ This box is the **stricter PR-only case** of that gate, enforced mechanically, n
   `mount` on-demand + delete-guarded `bisync`). OAuth tokens on the home volume, authorized via
   in-desktop Firefox.
 - **Untrusted-content ingest** (`bin/ingest-sandbox.sh`): runs the risky parse step in a
-  throwaway sandbox with **no token, no vault, no/allowlisted egress** — invoked on-demand by
+  throwaway sandbox with **no token, no vault, no network egress at all** (bwrap; the podman
+  "allowlisted egress" mode was removed as unreachable/unenforced — #111) — invoked on-demand by
   the wiki pipeline, NOT the entrypoint. This is the real containment (see SECRET ISOLATION in
   [policy/CLAUDE.md](policy/CLAUDE.md)).
 
