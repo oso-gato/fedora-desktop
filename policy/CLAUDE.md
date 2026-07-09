@@ -65,7 +65,7 @@ included; a free-text "yes" is not approval). Control-plane/guardrail changes ar
   STANDALONE, single-purpose, diff-summary naming every guardrail touched — NEVER bundled.
   (`sync-authorized-keys.sh` + `WORKLOAD_CONTAINERS` are fedora-bootstrap files — they do not
   exist in THIS repo, and per PUSH SCOPE every other repo is off-limits to this box entirely:
-  other-repo control-plane needs is SURFACED to Arthur, never a PR or push from here.)
+  other-repo control-plane needs are SURFACED to Arthur, never a PR or push from here.)
 
 - **FLEET-WIDE MERGE GATE (the shared model).** The promotion gate is REFSPEC-AWARE and fail-closed:
   routine feature-branch pushes (an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run
@@ -143,9 +143,10 @@ therefore about WHERE untrusted content is parsed, not about scoping a credentia
 
 - **Untrusted-content ingest runs in a THROWAWAY sandbox that holds NEITHER a token NOR the
   vault** — only the single input (the clipping/transcript) staged in and the single processed
-  note staged out, with NO network egress at all (the bwrap sandbox namespace has no interface;
-  the former podman "allowlisted egress" mode was removed as unreachable + unenforced — fetch
-  outside the sandbox, stage the FILE in). If a malicious clipping hijacks
+  note staged out, with NO network egress (the default bwrap sandbox namespace has no interface;
+  the legacy podman "allowlisted egress" mode cannot run in-container at this nesting depth and
+  its allowlist was never an enforced boundary — being removed outright in #111. Fetch OUTSIDE
+  the sandbox, stage the FILE in). If a malicious clipping hijacks
   the parse step, there is no credential to steal, no full vault to read, and no way to phone
   home. (An earlier draft mounted "the vault tree + the vault-only token" into this sandbox — that
   RE-creates the exact hole and is FORBIDDEN.)
