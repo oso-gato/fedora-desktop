@@ -48,7 +48,8 @@ shipping a `.live-gate`.
 
 Build is always CI; operate/deploy is always `fedora-bootstrap`; merge is always `fedora-dev` (or
 Arthur on the web). Mechanically enforced by the `gate-push.sh` PreToolUse hook + `managed-settings.json`
-+ the CI control-plane diff-guard — not prose-only.
++ the server-side `require-PR` ruleset on `main` — not prose-only. (The CI control-plane label-gate
+was removed; control-plane PRs are gated by the merge click + the standalone-PR convention.)
 
 ## The autonomy mandate — the apparatus's primary purpose
 
@@ -135,7 +136,8 @@ guard payload underneath is held identical by the parity check.
   `IMAGE=ghcr.io/oso-gato/<name>:latest` for a host deploy; **never hand-roll `podman`.**
 - **Control-plane class** (`policy/**`, `managed-settings.json`, `gate-push.sh`,
   `.github/workflows/**`, `*.container`, `run.sh*` security flags, key-sync, `*sudoers*`): standalone,
-  never bundled; needs the human-applied `control-plane-approved` label.
+  never bundled; gated by Arthur's merge click on the standalone PR (no CI label gate — the
+  label-gate job was removed).
 - **Claude-code guard payload** (the `managed-settings.json` deny-list + self-update lockout, the
   `claudebox-init.sh` lockout + native-shadow self-heal, the claude-code provenance): **byte-identical
   in all three, CI-enforced** by `fedora-dev`'s `bin/fleet-guard-parity.sh` (push/PR + daily). This is the

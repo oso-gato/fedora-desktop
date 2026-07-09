@@ -1,5 +1,5 @@
 # fedora-desktop — fedora-dev's headless harness (nested rootless podman + a
-# daily-rebuilt claudebox + key-only sshd/fail2ban/rsyslog + tailscale, NO
+# daily-rebuilt claudebox + key-only tailnet-only sshd + tailscale, NO
 # systemd inside) WITH an XFCE remote-desktop layered on (the XFCE/xrdp
 # desktop recipe). Purpose: operate Arthur's Obsidian vault + LLM wiki, plus
 # maintainer dev.
@@ -23,11 +23,13 @@ FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
 ARG GUAC_VERSION=1.6.0
 
 # Apache Guacamole release-signing key fingerprint (Michael Jumper CODE SIGNING
-# KEY, mjumper@apache.org). The guacamole.war web client (the lone class-(c)
-# artifact, and only on the guacamole web-gateway) is GPG-verified against this
-# PINNED key before use — PRINCIPLE 2(c) mandates the publisher's signature where
-# one exists (supersedes a bare sha256). Re-confirm on a GUAC_VERSION bump: a new
-# release may be signed by a different Apache committer key.
+# KEY, mjumper@apache.org). The four Apache artifacts — guacamole.war + the
+# auth-ban/-jdbc/-totp extension jars (four of the image's FIVE class-(c)
+# artifacts; the fifth, Obsidian, ships no upstream signature and is
+# sha256-logged) — are GPG-verified against this PINNED key before use —
+# PRINCIPLE 2(c) mandates the publisher's signature where one exists (supersedes
+# a bare sha256). Re-confirm on a GUAC_VERSION bump: a new release may be signed
+# by a different Apache committer key.
 ARG GUAC_GPG_FP=F467E54ACC52F1D2778826865B2977AEE5E4518F
 
 # Desktop-environment selector. xrdp is XFCE-ONLY now: `xfce` is the sole accepted
@@ -90,10 +92,10 @@ COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
 # EXPOSE is metadata only; the authoritative published ports live in run.sh /
-# fedora-desktop.container (PublishPort). The ONLY public-internet doors are the
-# Guacamole web (:8443), public key-only ssh (host :4444 -> :22), and public mosh
-# (UDP 61001-62000). RDP :3389 and VNC :5900 are TAILNET-ONLY and are deliberately
-# NOT published — they are listed here only as image metadata.
+# fedora-desktop.container (PublishPort). The ONLY public-internet door is the
+# Guacamole web (:8443). ssh (:22), mosh (UDP 61001-62000), RDP :3389 and VNC
+# :5900 are ALL TAILNET-ONLY and deliberately NOT published (never -p) — they
+# are listed here only as image metadata.
 EXPOSE 22 8443 3389 5900 61001-62000/udp
 
 # No HEALTHCHECK: podman builds OCI images which silently drop it. Health is
