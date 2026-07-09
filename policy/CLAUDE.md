@@ -64,7 +64,8 @@ included; a free-text "yes" is not approval). Control-plane/guardrail changes ar
   set), `policy/hooks/gate-push.sh`, the box-rebuild/assemble machinery. Highest-surface:
   STANDALONE, single-purpose, diff-summary naming every guardrail touched — NEVER bundled.
   (`sync-authorized-keys.sh` + `WORKLOAD_CONTAINERS` are fedora-bootstrap files — they do not
-  exist in THIS repo; for other-repo control-plane, this is a flagged PR, not a push.)
+  exist in THIS repo, and per PUSH SCOPE every other repo is off-limits to this box entirely:
+  other-repo control-plane needs is SURFACED to Arthur, never a PR or push from here.)
 
 - **FLEET-WIDE MERGE GATE (the shared model).** The promotion gate is REFSPEC-AWARE and fail-closed:
   routine feature-branch pushes (an explicit non-`main`, non-`HEAD`, non-tag destination refspec) run
@@ -142,7 +143,9 @@ therefore about WHERE untrusted content is parsed, not about scoping a credentia
 
 - **Untrusted-content ingest runs in a THROWAWAY sandbox that holds NEITHER a token NOR the
   vault** — only the single input (the clipping/transcript) staged in and the single processed
-  note staged out, with NO / strictly-allowlisted network egress. If a malicious clipping hijacks
+  note staged out, with NO network egress at all (the bwrap sandbox namespace has no interface;
+  the former podman "allowlisted egress" mode was removed as unreachable + unenforced — fetch
+  outside the sandbox, stage the FILE in). If a malicious clipping hijacks
   the parse step, there is no credential to steal, no full vault to read, and no way to phone
   home. (An earlier draft mounted "the vault tree + the vault-only token" into this sandbox — that
   RE-creates the exact hole and is FORBIDDEN.)
@@ -207,7 +210,11 @@ Reduced by the push-scope decision. Surfaced per this law; applied one-time:
    open PRs elsewhere, and push the vault repo; **NO admin, NO `workflow`** — replacing today's
    over-scoped `repo, workflow, read:org` token. (One token suffices; a separate vault token only
    if the vault is a distinct GitHub account — plumbing, not a security split.)
-2. Flip the host `policy.json` from `insecureAcceptAnything` to `sigstoreSigned` (pinned to the
-   CI OIDC identity) so only CI-built, identity-matching images deploy.
+2. RETIRED (do NOT act): the old directive to flip the host `policy.json` to `sigstoreSigned`
+   assumed CI-signed images. CI signing was dropped as unenforced theatre (#108: keyless-OIDC
+   identities are not matchable by podman's `sigstoreSigned` anyway) and the images are unsigned —
+   flipping the policy today would reject every `ghcr.io/oso-gato` pull (workload refresh,
+   live-gate, spin-up). Re-adding signing end-to-end would be a new, deliberate control-plane
+   project, not a one-time flip.
 3. (Resolved by push-scope: the host-vs-desktop ownership of `fedora-bootstrap`/`fedora-dev` —
    host owns; desktop proposes. No further reconciliation needed.)

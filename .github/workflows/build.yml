@@ -93,8 +93,8 @@ jobs:
 
       # PRINCIPLE 2(c) mechanical backstop: every executable on $PATH in the built
       # image must be owned by an rpm, except the repo's own COPY'd wrappers. Runs per
-      # variant (the matrix Containerfile + DESKTOP_ENV); the allowlist covers all
-      # three lineage entrypoints. A smuggled class-(c) loose binary fails the build.
+      # variant (the matrix Containerfile + DESKTOP_ENV); the allowlist covers both
+      # lineages' entrypoints. A smuggled class-(c) loose binary fails the build.
       - name: No-loose-binary backstop (Principle 2c)
         env:
           FILE: ${{ matrix.file }}
