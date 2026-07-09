@@ -39,23 +39,15 @@ The real delegation test is **Gate A** of the spike itself — if systemd reache
 
 ## Phase 1 — Get the spike onto the host
 
-The script lives on branch `validation/grd-headless-spike` of `oso-gato/fedora-desktop`.
-Pick one:
+The spike ships **in-tree on `main`** (`validation/grd-headless-spike.sh` — self-contained).
+On the host:
 
-- **A — via merge (cleanest):** the build box opens the PR → maintainer merges → on the host:
-  ```sh
-  git clone https://github.com/oso-gato/fedora-desktop && cd fedora-desktop
-  ```
-- **B — pre-merge, fetch the branch directly** (once the branch is pushed):
-  ```sh
-  git clone -b validation/grd-headless-spike https://github.com/oso-gato/fedora-desktop
-  cd fedora-desktop
-  ```
-- **C — copy the one file** (no clone needed): scp/paste `validation/grd-headless-spike.sh`
-  to the host and `chmod +x` it. It is self-contained.
+```sh
+git clone https://github.com/oso-gato/fedora-desktop && cd fedora-desktop
+```
 
-> The build box can `gh pr create` to make the branch fetchable (it is PR-only — it
-> opens, a maintainer merges). Until then, route B/C.
+Run it from the repo checkout: `./validation/grd-headless-spike.sh`. (No clone handy? The
+one file scp/pasted + `chmod +x` also works — it is self-contained.)
 
 ---
 
@@ -129,7 +121,7 @@ committing code.
 
 ```sh
 sudo dnf install -y podman git freerdp xorg-x11-server-Xvfb ImageMagick
-git clone -b validation/grd-headless-spike https://github.com/oso-gato/fedora-desktop
+git clone https://github.com/oso-gato/fedora-desktop
 cd fedora-desktop && ./validation/grd-headless-spike.sh
 ```
 

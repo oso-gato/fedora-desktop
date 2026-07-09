@@ -1,9 +1,31 @@
-# validation/ — host-run spikes (NOT part of the image)
+# validation/ — host-run spikes + go-live runbooks (NOT part of the image)
 
-These scripts are **host-validation experiments**, not baked into any fedora-desktop
-image and not run by CI or any entrypoint. They exist because the grd lineage is
-systemd-PID-1 and **cannot boot in the nested build engine** — the only way to prove
-its runtime behaviour is on a cgroup-v2-delegating host.
+The scripts here are **host-validation experiments** and the `.md`s are **operator
+runbooks** — none are baked into any fedora-desktop image or run by CI or any
+entrypoint. They exist because the decisive behaviours (systemd-PID-1 boot, multi-user
+paint, per-user volume ownership, fleet tiles) can only be proven on a real host — the
+grd lineage cannot even boot in the nested build engine.
+
+## Index
+
+- **`grd-headless-spike.sh`** — the grd session primitive: does a headless GNOME-50 session
+  paint behind loopback RDP in a seatless/no-GPU/systemd-PID-1 container, with SSO + resume?
+  (Detailed below.)
+- **`xrdp-headless-spike.sh`** — the xrdp multi-user primitive: N distinct users → ONE `:3389` →
+  N distinct painted per-user Xorg `:1x` sessions, on the production xorgxrdp/Xorg backend
+  (fails a run that silently falls back to Xvnc). Plain `podman run` — no cgroup delegation needed.
+- **`user-volumes-spike.sh`** — per-user volume ownership (pinned uid `1000+n`/gid `8000+n`,
+  `0700` isolation) + the optional `2770 root:deskshare` shared folder with default-ACL
+  read-write collaboration.
+- **`guac-fleet-provision-spike.sh`** — runs the REAL `bin/guac-db-provision.sh` against a
+  throwaway MariaDB + the real Guacamole schema: tile/grant matrix, downgrade-revokes,
+  exact-whole-token (fail-closed) grant matching.
+- **`GO-LIVE-VALIDATION.md`** — the xrdp go-live runbook — **GREEN end-to-end (erebus,
+  2026-06-25)**; the production proof of record.
+- **`GO-LIVE-VALIDATION-grd.md`** — the grd go-live runbook (mirrors xrdp's B-gates;
+  full-lineage deploy validation still pending).
+- **`HOST-VALIDATION-PROCESS.md`** — the operator/host process for running the grd spike on a
+  cgroup-v2-delegating host and feeding the result back to the build box.
 
 ## grd-headless-spike.sh
 

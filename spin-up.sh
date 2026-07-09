@@ -5,7 +5,7 @@
 #   1. core's single password (system/RDP == Guacamole web — one credential, asked once)
 #   2. public web port + the optional Dev/VPS fleet SSH tiles + Tailscale auth key
 #   3. HOW MANY additional users beyond core (0-5)
-#   4. for EACH user: username, password, and fleet access (none|dev|host|both)
+#   4. for EACH user: username, password, and fleet access (none | all | comma-list of tile hostnames)
 # Then it exports the env and exec's run.sh. (run.sh remains the non-interactive
 # deploy contract; a scripted/host-claudebox deploy can set the same env + call it
 # directly. This wizard just gathers the answers interactively — Principle 5: every

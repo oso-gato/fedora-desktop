@@ -6,7 +6,7 @@ end-to-end production proof on a live host, mirroring xrdp's B-gates.
 
 **grd is functionally equivalent to xrdp v1.0.0 by DESIGN — same web door (Apache Guacamole on
 :8443), same multi-user + per-user fleet grants + TOTP + auth-ban + shared folder, same harness
-(claudebox / ssh / fail2ban / cloud+vault sync). Only the INIT contract + the desktop differ:**
+(claudebox / key-only tailnet-only ssh / cloud+vault sync). Only the INIT contract + the desktop differ:**
 systemd-PID-1 + GNOME-50-Wayland headless (gdm-spawned per-user `gnome-remote-desktop-headless`
 on per-user loopback RDP ports), vs xrdp's supervised-bash + XFCE/X11.
 
@@ -30,19 +30,21 @@ desktop, and the session RESUMES on reconnect — for **single-user AND 2 concur
 deploy — web+TOTP, per-user paint through the tiles, the fleet-grant matrix, cross-device resume,
 shared folder, auth-ban — AND that the **shipped code** (not the spike harness) brings it all up.
 
-**MUST-MERGE-FIRST (the grd go-live PR set — without these the deploy is broken):**
+**THE GO-LIVE PR SET (historical — all four are MERGED into the current tree):**
 - **#68** `feat/grd-session-race-twopass` — the session-bus race fix (the spike waited 25s before
-  `grdctl`; the shipped entrypoint had dropped it → black desktop). **Without this grd does not paint.**
+  `grdctl`; the shipped entrypoint had dropped it → black desktop). Without it grd did not paint.
 - **#71** `feat/grd-harness-parity` — claudebox dev capability (podman.socket + eager assemble) +
-  the daily-refresh timer + rebuild-watcher + sshd/fail2ban/host-keys + cloud/vault sync.
-  **Without #71, `claude`/claudebox is dead on grd and ssh is unhardened.**
+  the daily-refresh timer + rebuild-watcher + sshd/host-keys + cloud/vault sync. (Its fail2ban
+  piece was later dropped fleet-wide along with fail2ban/rsyslog themselves — #106; ssh is
+  key-only + tailnet-only, so they defended nothing.)
 - **#69** `feat/grd-spinup-image-default` — `spin-up.sh` defaults to `:grd` for LINEAGE=grd
   (else it pulls the **xrdp** image and runs it under `--systemd=always` → box never comes up).
-- **#70** `control-plane/grd-runsh-image-default` — `run.sh.grd` defaults to GHCR `:grd`
-  (CONTROL-PLANE → needs the `control-plane-approved` label to merge).
+- **#70** `control-plane/grd-runsh-image-default` — `run.sh.grd` defaults to GHCR `:grd` (merged
+  standalone on the merge click, per the control-plane convention).
 
-After all four merge, CI republishes a signed `ghcr.io/oso-gato/fedora-desktop:grd` carrying the
-fixes. **Validate against THAT image — verify the running digest (the xrdp `$IMAGE` lesson).**
+CI publishes `ghcr.io/oso-gato/fedora-desktop:grd` from current `main`, carrying all four fixes
+(unsigned — image signing was dropped as unenforced theatre, #108). **Validate against THAT
+image — verify the running digest (the xrdp `$IMAGE` lesson).**
 
 ---
 
@@ -55,7 +57,7 @@ and the fleet SSH path in place. Identical access model to xrdp; only the deploy
 - **The host grants cgroup-v2 delegation + writable `/sys/fs/cgroup`.** (erebus, Fedora-CoreOS-class,
   qualifies.) If absent, PID-1 systemd never reaches `graphical.target` and the box never goes healthy
   — `run.sh.grd` discloses this; check `podman logs -f fedora-desktop-grd`.
-- **The four go-live PRs are merged** and CI has republished a signed `:grd` (see above).
+- **CI has published a `:grd` from current `main`** (the four go-live fixes are all merged — see above).
 - **The fleet hosts** (`fedora-dev`, `erebus`) are up, on the tailnet, sshd reachable, and the tailnet
   **`ssh` ACL grants this desktop node action `accept` (NOT `check`)** — keyless Tailscale-SSH then
   authenticates by tailnet identity (see `fleet-tile-keyless-tailscale-ssh-acl`, `ZTNA-ACCESS.md`).
@@ -140,7 +142,8 @@ RDP_PW='<strong>' GUAC_PW='<strong>' WEB_PORT=8444 \
   exit 0; CI PR builds are the proof of record).
 - **Assembly-verified:** the fixes are present in the built image — `default.target.wants/{claudebox-
   bootstrap,cloud-sync,vault-gitsync}.service` + `sockets.target.wants/podman.socket` enabled; the sshd
-  hardening drop-in, fail2ban jail, persistent-host-key drop-in, and bootstrap script all present;
+  hardening drop-in, persistent-host-key drop-in, and bootstrap script all present (the fail2ban jail
+  verified at the time was later dropped along with fail2ban itself — #106);
   baked host keys stripped.
 - **Static-verified:** `bash -n` on all scripts, `systemd-analyze` on the units, the session bring-up
   diffed against the host-proven spike (two-pass + bus-poll), the web-door params (`security=any`,

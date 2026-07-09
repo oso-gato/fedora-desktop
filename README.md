@@ -7,17 +7,17 @@ vault + an LLM wiki) — capable enough to build and update *its own* code, but 
 can't reach out and disturb your wider setup.
 
 It's the **fedora-dev harness** (a self-refreshing Claude Code box: nested rootless podman,
-key-only SSH, fail2ban, Tailscale, a daily-rebuilt "claudebox") with an **XFCE desktop**
+key-only tailnet-only SSH, Tailscale, a daily-rebuilt "claudebox") with an **XFCE desktop**
 layered on (the XFCE/xrdp desktop recipe). Claude Code refreshes itself *daily*,
 independent of the heavier desktop. The vault/wiki are governed by their *own* rules —
 Claude is the writer, you are the director.
 
 - 🌐 **How you get in (public, from anywhere):** the **web desktop** — your whole desktop in
-  a browser tab over HTTPS. It is the one *hardened* public door: real TLS, web login,
-  brute-force-protected, patched. Plus **key-only SSH + Mosh** for a terminal.
+  a browser tab over HTTPS. It is the ONLY public door, and a *hardened* one: real TLS, web
+  login + TOTP 2FA, brute-force lockout, patched.
 - 🖥️ **How you get in (private, Tailscale only):** native **RDP** (the nicest experience) and
-  **VNC**, plus password logins for SSH — all **deliberately kept off the open internet.**
-  RDP is the #1 ransomware door, so it's one Tailscale tap away instead of public.
+  **VNC**, plus **key-only SSH + Mosh** for a terminal — all **deliberately kept off the open
+  internet.** RDP is the #1 ransomware door, so it's one Tailscale tap away instead of public.
 - 📝 **What it does:** a full desktop with **Obsidian** (notes), **VS Code** (code),
   **Firefox**, **1Password** (credentials), and **Claude Code** (the AI, auto-updated daily).
 - ✋ **How changes ship — the fleet rule:** this box **opens PRs only — it never merges or self-deploys.**
@@ -104,13 +104,13 @@ a short TLDR the box has already checked against its own work as if it were you.
   user the box creates). **Every other repo is off-limits.** The box **opens PRs only — it never
   merges**: develop → open PR → STOP; `fedora-dev` merges on Arthur's click (THE FLEET).
 
-It is the **fedora-dev harness extended**, not a fork — the nested-podman + sshd/fail2ban +
+It is the **fedora-dev harness extended**, not a fork — the nested-podman + key-only sshd +
 tailscale + daily-claudebox machinery is lifted verbatim and the XFCE remote desktop
 (the XFCE/xrdp desktop recipe) is layered on top.
 
 ```
 self-develop → self-validate in the OWN nested engine → open PR → STOP → fedora-dev merges on Arthur's APPROVE
-            → CI builds + cosign-signs → ghcr.io/oso-gato/fedora-desktop:latest → host pull-refresh recreates the box
+            → CI builds + pushes → ghcr.io/oso-gato/fedora-desktop:latest → host pull-refresh recreates the box
 ```
 
 For **any other repo**, the box stops at "open a PR" — it never deploys or operates a
@@ -134,14 +134,14 @@ metapackage traps) lives in [CLAUDE.md](CLAUDE.md).
 |---|---|---|
 | 1 | BASE | Build only from `registry.fedoraproject.org/fedora:${FEDORA_VERSION}`. Version is a Containerfile `ARG`, never inlined. |
 | 2 | SOURCES | Every package from exactly one official source: (a) Fedora's own repos via dnf; (b) the vendor's/developer's own RPM or dnf repo (`.repo`, `gpgcheck=1`); (c) at worst a developer/vendor-released AppImage (sha256 logged). NEVER COPR, pip/npm/cargo/gem/brew global, curl-pipe-sh, tarball-on-PATH, flatpak, snap. Applies to BOTH the base image AND the claudebox `additional_packages`. **Current waivers: none.** |
-| 3 | MINIMAL | dnf with `--setopt=install_weak_deps=False`; install the **leaf** package, never a convenience metapackage (weak-dep blocking does NOT stop a metapackage's hard Requires — e.g. `fail2ban` hard-pulls firewalld + esmtp; we install `fail2ban-server`). Every package gets a justifying row in the Packages table; a package without a row is a violation. |
+| 3 | MINIMAL | dnf with `--setopt=install_weak_deps=False`; install the **leaf** package, never a convenience metapackage (weak-dep blocking does NOT stop a metapackage's hard Requires — e.g. `fail2ban` hard-pulls firewalld + esmtp, which is why the fleet installed the `fail2ban-server` leaf while it still shipped fail2ban; the whole package was since dropped — #106). Every package gets a justifying row in the Packages table; a package without a row is a violation. |
 | 4 | VERIFY FIRST | Before adopting/bumping any source or pin, fact-check it against the live source. Gate risky installs in a scratch container before editing build files. |
 | 5 | NO SECRETS / NO IDENTITY | No passwords, keys, or personal usernames in any layer, file, or commit. User is the generic `core` (uid 1000). `RDP_PW` / `GUAC_PW` (required) + `RFB_PW` / `TS_AUTHKEY` (optional) enter ONLY at runtime; the entrypoint fails fast when a required one is missing. |
 | 6 | PINS | The Apache `GUAC_VERSION` + its `GUAC_GPG_FP` are Containerfile `ARG`s (the `.war` + the auth-ban/-jdbc/-totp extensions all ride them); bump there only, after a rule-4 check. rclone + tomcat-jakartaee-migration are Fedora class-(a) packages — no version pin. (Obsidian is intentionally latest-at-build, sha256-logged.) |
 | 7 | DEPLOY CONTRACT | `run.sh` is the only sanctioned way to run the image: it carries the runtime `--health-cmd` (OCI drops the Containerfile HEALTHCHECK), devices, volumes, restart policy, and the **port-publish set**. The Quadlet `fedora-desktop.container` is the systemd-managed equivalent. Sensitive ports (RDP/VNC + password-auth) stay tailnet-only — never `-p`. |
-| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → cosign-signs → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. A **control-plane diff-guard** fails any PR touching guardrail files without an explicit waiver label. The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
+| 8 | CI + LAYERED CADENCE | `.github/workflows/build.yml` builds → pushes the base image to GHCR on push to `main`, on the 15th monthly (`--no-cache`), and on dispatch; PRs build-validate only. (Image signing was dropped as unenforced theatre — #108; no fleet host cosign-verifies. There is NO CI label check on control-plane PRs — the gate is Arthur's merge click + the standalone-PR convention.) The in-container claudebox refreshes claude-code DAILY on its own timer; it never touches CI. |
 | 9 | VALIDATE | After any change: build, deploy via `run.sh`, confirm `(healthy)`, functional-probe each access path (web/RDP/VNC/ssh + sync). Final proof is CI green + a host-side deploy. |
-| 10 | PROMOTION GATE | The box is **PR-only** — it opens PRs and never merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled. Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the CI diff-guard. |
+| 10 | PROMOTION GATE | The box is **PR-only** — it opens PRs and never merges, pushes, or tags any `main` (incl. its own); `fedora-dev` merges on Arthur's clickable APPROVE (THE FLEET). Control-plane/guardrail changes are standalone, never bundled — gated by that merge click + the standalone-PR convention, NOT by any CI label check. Enforced mechanically by the managed PreToolUse hook (`policy/hooks/gate-push.sh`) + managed-settings + the server-side `require-PR` ruleset on `main`. |
 
 ## Packages
 
@@ -159,14 +159,12 @@ cloud is rclone-only.
 | shadow-utils | harness | a | `newuidmap`/`newgidmap` setuid helpers — mandatory for nested rootless podman |
 | fuse-overlayfs | harness | a | nested rootless storage driver (kernel forbids native overlay-on-overlay) |
 | passt | harness | a | pasta — podman 5's default rootless network backend |
-| nftables | harness | a | firewall backend: tailscaled programs rules via the nftables Netlink API, netavark defaults to nftables on Fedora 41+, fail2ban bans via `nftables[type=multiport]`. (No iptables — verified unnecessary.) |
+| nftables | harness | a | firewall backend: tailscaled programs rules via the nftables Netlink API, netavark defaults to nftables on Fedora 41+, and the in-container `nft fd_tailnet_guard` drops ssh/mosh/RDP/VNC off non-tailnet interfaces. (No iptables — verified unnecessary.) |
 | openssh-server | harness | a | the login door (key-only; keys synced from `github.com/oso-gato.keys` each start). **TAILNET-ONLY** — keyless Tailscale SSH + ssh-key over the tailnet (never `-p`; the nft guard drops :22 off non-tailnet ifaces); mosh bootstraps over it |
-| mosh | harness | a | roaming-resilient remote shell (UDP, AEAD-authenticated). Public UDP range 61001-62000 (non-default, to avoid colliding with the bootstrap host's own mosh) |
+| mosh | harness | a | roaming-resilient remote shell (UDP, AEAD-authenticated). **TAILNET-ONLY** (never `-p`) — UDP range 61001-62000 (non-default, to avoid colliding with the bootstrap host's own mosh) |
 | tmux | harness | a | session multiplexer; every interactive login auto-attaches `main`; survives disconnects/restarts |
 | distrobox | harness | a | declaratively bootstraps the in-container claudebox via `distrobox assemble create --file distrobox.ini` |
 | inotify-tools | harness | a | `inotifywait` watches the in-box `rebuild.request` flag (no systemd `.path` units — no systemd inside, by design) |
-| fail2ban-server | harness | a | brute-force mitigation on the ssh auth path (defense-in-depth; ssh is tailnet-only); bans via `nftables[type=multiport]`; tailnet CGNAT 100.64.0.0/10 is `ignoreip`'d. The **leaf** package (the `fail2ban` metapackage hard-pulls firewalld + esmtp — see Principle 3) |
-| rsyslog | harness | a | captures sshd's AUTHPRIV to `/var/log/secure` so fail2ban can read it (no journald in this container) |
 | sudo | harness | a | break-glass escalation (`core` in `wheel`); near-zero footprint (host-side `podman exec -u 0` is the real recovery door) |
 | procps-ng | harness | a | `pgrep` for the entrypoint watchdog AND the `--health-cmd` |
 | glibc-langpack-en | harness | a | UTF-8 rendering for tmux/terminal |
@@ -259,7 +257,7 @@ with them via `run.sh` / the Quadlet:
    rides it while LXQt adds a net-new Qt6/KF6 runtime nothing else uses.)
    CI publishes each variant to GHCR — pull the tag you want:
    `:xrdp` (= `:latest`; the xrdp lineage's DE is XFCE) · `:grd`
-   (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd image builds + signs, but
+   (plus `:<tag>-<date>` / `:<tag>-<sha>` immutable tags). The grd image builds + publishes, but
    its *runtime* (booting the Wayland session) is host-validation-pending — a green build ≠ boots.
 2. **`WEB_PORT`** — the public web-door host port (**default 8443**; the only public port). The
    web gateway is **Apache Guacamole only** (no selector — noVNC was removed fleet-wide; a public,
@@ -280,11 +278,13 @@ with them via `run.sh` / the Quadlet:
 4. **Additional users (optional)** — how many ADDITIONAL desktop users beyond `core` (**0 to 5**)?
    `core` is always the admin (full dev). For each extra user ask: a **username** (lowercase
    `^[a-z_][a-z0-9_-]{0,30}$`, not `core`/`root`), a **strong password**, and a **fleet-access grant**
-   — **`none`** (Desktop only) / **`dev`** / **`host`** / **`both`** — passed as
+   — **`none`** (Desktop only) / **`all`** (every fleet tile) / a **comma-list of tile hostnames**
+   (e.g. `fedora-dev,onyx`; matched exact-whole-token, fail-closed — the retired `dev`/`host`/`both`
+   vocabulary grants NOTHING) — passed as
    `USER{n}_NAME` / `USER{n}_PW` / `USER{n}_ACCESS`. Each user gets their OWN Guacamole web login that
    SSOs into their OWN desktop session + only the fleet tiles their grant allows, and their OWN persisted
    `/home` volume (`fedora-desktop-userN`). A user with `none` is a non-privileged "wiki worker" (desktop +
-   Obsidian/vault, no dev); a grant of `dev`/`host`/`both` adds the matching bastion tile(s) — note that is
+   Obsidian/vault, no dev); any granted tile adds bastion reach — note that is
    **bastion reach as `core`** on that box (an admin-level grant; see CLAUDE.md MULTI-USER). **0 extra
    users = today's single-`core` behavior, byte-identical.** Each user's session persists + resumes across
    devices. **The interactive `./spin-up.sh` wizard asks all of this for you** (count, then per-user
@@ -311,7 +311,7 @@ the in-container `nft` guard — tailnet-only by *construction*, so a future `-p
 | `GUAC_PW` | **yes** | the public Guacamole web-login password (user `core` at `https://<host>:8443/guacamole/`). Use a STRONG one — `guacamole-auth-ban` adds brute-force lockout AND **TOTP 2FA** is enforced (enroll a QR at first login). 2FA is additive defense-in-depth, NOT a license for a weak password (TOTP is phishable + its seed is in the same DB) |
 | `RFB_PW` | no | **OPTIONAL** — arms the same-session native-VNC mirror on :5900 (tailnet-only; VncAuth — only first 8 chars effective). Not a gateway choice |
 | `TS_AUTHKEY` | no | unattended tailnet join (else the join is interactive — open the printed login URL once) |
-| `USER{1..5}_NAME` / `_PW` / `_ACCESS` | no | **OPTIONAL** — up to **5** additional desktop users (each: username + strong password + fleet-access `none`/`dev`/`host`/`both`). `core` stays admin; each user gets their OWN web login → their OWN desktop session + only the fleet tiles their grant allows + their OWN persisted `/home` volume (`fedora-desktop-userN`). A `dev`/`host` grant = bastion reach **as `core`** on that box. `./spin-up.sh` prompts for these. See CLAUDE.md MULTI-USER |
+| `USER{1..5}_NAME` / `_PW` / `_ACCESS` | no | **OPTIONAL** — up to **5** additional desktop users (each: username + strong password + fleet-access `none` \| `all` \| a comma-list of tile hostnames, exact-whole-token fail-closed — the retired `dev`/`host`/`both` vocabulary grants NOTHING). `core` stays admin; each user gets their OWN web login → their OWN desktop session + only the fleet tiles their grant allows + their OWN persisted `/home` volume (`fedora-desktop-userN`). Any granted tile = bastion reach **as `core`** on that box. `./spin-up.sh` prompts for these. See CLAUDE.md MULTI-USER |
 
 The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.
 
@@ -321,7 +321,7 @@ The entrypoint **fails fast** if `RDP_PW` or `GUAC_PW` is unset.
 |---|---|---|---|
 | 🌐 Guacamole web (TLS) | `${WEB_PORT}`→8443/tcp | **PUBLIC — the ONLY public door** | web login `core` / `GUAC_PW` **+ TOTP 2FA** → SSO into local RDP |
 | 🪪 Tailscale SSH | tailnet :22 | tailnet-only | keyless (Tailscale identity) — **the primary maintenance / recovery path** |
-| 🔑 SSH (key) | :22 | **TAILNET-ONLY (never `-p`)** | ssh-key over the tailnet (keys from `github.com/oso-gato.keys`); fail2ban-guarded |
+| 🔑 SSH (key) | :22 | **TAILNET-ONLY (never `-p`)** | ssh-key over the tailnet (keys from `github.com/oso-gato.keys`). Key-only + tailnet-only IS the brute-force posture (fail2ban was dropped as defending nothing — #106); the public web door's brute-force control is the auth-ban 3/900 lockout + TOTP |
 | 📡 Mosh | UDP | **TAILNET-ONLY** | over the tailnet ssh |
 | 🖥️ RDP | 3389/tcp | **TAILNET-ONLY (never `-p`)** | `core` / `RDP_PW` (native clients: mstsc, Windows App) |
 | 🖲️ VNC | 5900/tcp | **TAILNET-ONLY (never `-p`)** | `RFB_PW` (only if set) — mirrors the RDP session |
@@ -379,7 +379,7 @@ compares before restart, enabling its auto-rollback). `Notify=healthy`, `AutoUpd
 Takes ~2-5 minutes. The entrypoint seeds `core`'s password from `RDP_PW`, syncs ssh keys from
 `github.com/oso-gato.keys`, mints the Guacamole TLS keystore, brings up the loopback MariaDB
 engine + provisions DB-backed web auth (each web login + its desktop/fleet tiles), starts
-rsyslog + sshd + fail2ban + tailscaled + xrdp + mariadbd + guacd + Tomcat, then eagerly
+sshd + tailscaled + xrdp + mariadbd + guacd + Tomcat, then eagerly
 assembles the claudebox in the background (dnf-installs claude-code + tools inside the box). The
 first `claude` invocation tails the assemble log if it's still in progress. If `TS_AUTHKEY` is
 unset the tailnet join is interactive — `podman logs -f fedora-desktop` for the one-time login URL.
@@ -436,10 +436,13 @@ This box is the **stricter PR-only case** of that gate, enforced mechanically, n
   variants from this box — there is **no approval marker**; the automatic vault git-sync
   `git -C <vault> push` is the sole exemption;
 - `managed-settings.json` sets `disableBypassPermissionsMode`, `defaultMode: auto`,
-  `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, an MCP deny on any merge tool,
-  blanket `git push` / `gh pr merge` deny rules, and a narrow allow for the vault git-sync push only;
-- the **CI control-plane diff-guard** fails any PR touching a guardrail file unless a reviewer
-  applies the `control-plane-approved` label (standalone, never bundled).
+  `allowManagedPermissionRulesOnly`, `allowManagedHooksOnly`, an MCP deny on any merge tool, and
+  `allow: ["Bash(*)"]` (full-autonomy, #107 — the old blanket `git push` / `gh pr merge` deny rules
+  and the narrow vault-push allow were REMOVED in the control-plane convergence; the refspec-aware
+  hook is the single push/merge boundary, and the vault-sync exemption lives inside it);
+- control-plane PRs carry **no CI label gate** (the diff-guard job was removed as theatre): they
+  are gated by the standalone-PR convention + Arthur's merge click, with the server-side
+  `require-PR` ruleset on `main` as the floor.
 
 ### Self-develop → PR (the box opens a PR; `fedora-dev` merges)
 
@@ -449,7 +452,7 @@ This box is the **stricter PR-only case** of that gate, enforced mechanically, n
                  RDP/VNC/web + sync. --restart=no --rm, scratch volume, NEVER bind-mount $HOME
                  or the vault, explicit rm at session end
 3 propose        open a PR → STOP. fedora-dev merges it on Arthur's clickable APPROVE (you never merge).
-4 ship           merged → CI builds + cosign-signs → GHCR → the HOST's pull-based refresh
+4 ship           merged → CI builds + pushes → GHCR → the HOST's pull-based refresh
                  (busy-probe deferral + digest-rollback on health failure) recreates the box
 ```
 

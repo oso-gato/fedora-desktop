@@ -71,15 +71,18 @@ on the tailnet** and the fleet SSH path in place. Throwaway containers can't do 
 ### B1 — deploy xrdp with the full secret set
 ```sh
 RDP_PW='<strong>' GUAC_PW='<strong>' WEB_PORT=8443 \
-FLEET_SSH='dev 100.x.x.dev 22 core;vps 100.x.x.host 22 core' \
+FLEET_SSH='fedora-dev 100.x.x.dev 22 core;erebus 100.x.x.host 22 core' \
 USER1_NAME=jenny USER1_PW='<strong>' USER1_ACCESS=none \
-USER2_NAME=bob   USER2_PW='<strong>' USER2_ACCESS=both \
-USER3_NAME=dev1  USER3_PW='<strong>' USER3_ACCESS=dev \
-USER4_NAME=ops1  USER4_PW='<strong>' USER4_ACCESS=host \
+USER2_NAME=bob   USER2_PW='<strong>' USER2_ACCESS=all \
+USER3_NAME=dev1  USER3_PW='<strong>' USER3_ACCESS=fedora-dev \
+USER4_NAME=ops1  USER4_PW='<strong>' USER4_ACCESS=erebus \
 TS_AUTHKEY=tskey-... IMAGE=ghcr.io/oso-gato/fedora-desktop:latest ./run.sh
 ```
-(or `./spin-up.sh` interactively — it drives `run.sh`). Use **canonical** fleet labels `dev`/`vps`
-(grant matching is substring-based: `dev` matches any `*dev*`, `host` matches `*vps*|*host*`).
+(or `./spin-up.sh` interactively — it drives `run.sh`). **Label each fleet tile by its tailnet
+hostname** (the wizard's per-host picker does this for you). A `USERn_ACCESS` grant is `none` |
+`all` | a comma-list of tile hostnames (e.g. `fedora-dev,erebus`), matched **exact-whole-token,
+fail-closed** — the retired `dev`/`host`/`both` vocabulary grants NOTHING (substring matching was
+removed with the exact-label fix, PR #43).
 If deploying via the **Quadlet** instead of `run.sh`, first **uncomment** the per-user `Volume=` lines
 in `fedora-desktop.container` (else extra users lose `/home` on recreation) and note the Quadlet has
 **no fleet env** — fleet tiles work only via `run.sh` today.
@@ -88,8 +91,8 @@ in `fedora-desktop.container` (else extra users lose `/home` on recreation) and 
 1. **Healthy:** `podman inspect -f '{{.State.Health.Status}}' fedora-desktop` → `healthy` (the #32 cmd = `:8443` 200 **and** `/dev/tcp :3389` open **and** `mariadb-admin ping`).
 2. **Web + TOTP:** browse `https://<public-ip>:8443/guacamole/` → login `core`/`GUAC_PW` → TOTP QR on first login, code on next → painted **XFCE** desktop in the browser.
 3. **Multi-user paint:** log in as `jenny` (USER1) → her **own** painted session (the least-proven path — watch for a black second session).
-4. **Access-grant matrix:** `jenny`(none)→Desktop only · `dev1`(dev)→Desktop+`ssh-dev` · `ops1`(host)→Desktop+`ssh-vps` · `bob`(both)→Desktop+`ssh-dev`+`ssh-vps` · `core`→Desktop+all. Then **downgrade** `bob` to `dev` and redeploy → the `ssh-vps` tile is **revoked**.
-5. **★ Fleet over Tailscale (the primary ask):** as `core`, click **`ssh-dev`** → a real shell on the **dev box**; click **`ssh-vps`** → a real shell on the **host** — both **over the tailnet** (not public). Confirm the source is this node's tailnet IP.
+4. **Access-grant matrix:** `jenny`(`none`)→Desktop only · `dev1`(`fedora-dev`)→Desktop+`ssh-fedora-dev` · `ops1`(`erebus`)→Desktop+`ssh-erebus` · `bob`(`all`)→Desktop+every tile · `core`→Desktop+all. Then **downgrade** `bob` to `fedora-dev` and redeploy → the `ssh-erebus` tile is **revoked**.
+5. **★ Fleet over Tailscale (the primary ask):** as `core`, click **`ssh-fedora-dev`** → a real shell on the **dev box**; click **`ssh-erebus`** → a real shell on the **host** — both **over the tailnet** (not public). Confirm the source is this node's tailnet IP.
 6. **Cross-device resume:** RDP as `jenny` from device A, disconnect, reconnect from device B at a **different** geometry → the **same** session resumes (apps still open) — the bpp=24 invariant.
 7. **auth-ban:** 3 bad web logins → source IP locked out ~900s.
 
@@ -98,7 +101,7 @@ in `fedora-desktop.container` (else extra users lose `/home` on recreation) and 
 - **Keyless Tailscale-SSH through guacd works IFF the tailnet ACL action is `accept`, not `check`** (verified erebus 2026-06-25): under `check` the tile hangs on an unsatisfiable browser re-auth (headless node, no browser); under `accept` it connects clean. Fix = set the desktop node's `ssh` ACL to `accept`. `FLEET_SSH_KEY` does NOT help Tailscale-SSH targets (Tailscale SSH intercepts `:22`, ignoring keys).
 - **No healthcheck probes a fleet tile** → a down/unauthorized bastion is invisible to health/rollback; B2-gate-5 is a **manual** click-probe.
 - **TOTP enrollments live in the `/var/lib/mysql` volume** → losing it wipes all 2FA; do a backup/restore drill before go-live.
-- **A `dev`/`host` grant = a `core`-admin shell** on that fleet box via keyless Tailscale-SSH (ACL `accept`-mode) as `core@<target>` (per CLAUDE.md) — confirm that's intended for the users you grant it to.
+- **Any granted fleet tile = a `core`-admin shell** on that fleet box via keyless Tailscale-SSH (ACL `accept`-mode) as `core@<target>` (per CLAUDE.md) — confirm that's intended for the users you grant it to.
 
 ---
 
