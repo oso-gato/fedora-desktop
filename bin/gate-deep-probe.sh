@@ -57,12 +57,24 @@ case "$LIN" in
     if pgrep -u core -x gnome-shell >/dev/null 2>&1; then pass "grd: gnome-shell compositing for core (desktop rendering)"
     elif pgrep -u core -f gnome-remote-desktop >/dev/null 2>&1; then pass "grd: gnome-remote-desktop running for core"; info "gnome-shell not matched by pgrep -x; GRD daemon present"
     else bad "grd: neither gnome-shell nor gnome-remote-desktop running for core (session may be black)" "grd-compositor"; fi
+    # The assertion is "GRD is the :3389 listener" — attribute the socket to its
+    # process via /proc/<pid>/comm (survives ss's process-name truncation). The old
+    # fallback arm passed on ANY listener, silently degrading this to the port-open
+    # check HEALTH already did.
     l="$(ss -ltnp 2>/dev/null | grep ':3389' | head -1 || true)"
-    case "$l" in
-      *gnome-remote*|*grd*) pass "grd: gnome-remote-desktop is the :3389 listener" ;;
-      ?*) info "grd: :3389 listener = $l"; pass "grd: :3389 has a listener" ;;
-      *) bad "grd: nothing listening on :3389 per ss" "grd-listener" ;;
-    esac
+    if [ -z "$l" ]; then bad "grd: nothing listening on :3389 per ss" "grd-listener"
+    else
+      lp="$(printf '%s' "$l" | sed -n 's/.*pid=\([0-9]*\).*/\1/p')"
+      lc="$(cat "/proc/${lp:-0}/comm" 2>/dev/null || true)"
+      case "$lc" in
+        gnome-remote-de*) pass "grd: gnome-remote-desktop is the :3389 listener (comm=$lc)" ;;
+        "") if pgrep -u core -f gnome-remote-desktop >/dev/null 2>&1; then
+              info "grd: :3389 listener pid unresolved by ss; GRD daemon confirmed running"
+              pass "grd: :3389 listener present + GRD daemon running (pid-attribution unavailable)"
+            else bad "grd: :3389 listener cannot be attributed and no GRD daemon is running" "grd-listener"; fi ;;
+        *) bad "grd: the :3389 listener is '$lc', NOT gnome-remote-desktop" "grd-listener" ;;
+      esac
+    fi
     # corroborating paint evidence (informational — journal location can vary by GNOME build)
     pj="$( { journalctl --no-pager -b _UID=1000 2>/dev/null; journalctl --no-pager -b -u 'gnome-headless-session@core.service' 2>/dev/null; } | grep -iE 'surfaceless|llvmpipe|No seat assigned, running headlessly|software rendering' | head -1 || true)"
     [ -n "$pj" ] && info "grd: mutter headless paint signature: $pj" || info "grd: no explicit surfaceless/llvmpipe journal line captured (non-gating)"

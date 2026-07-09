@@ -95,13 +95,12 @@ if [ -n "${ENABLE_SHARED:-}" ]; then
     echo "[shared] /home/shared enabled (group deskshare; members: ${USERNAMES[*]})"
 fi
 
-# ---- key-only ssh: sync core's authorized_keys from github.com/oso-gato.keys -
-runuser -u core -- bash -c '
-    mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    t=$(mktemp)
-    if curl -fsSL --max-time 10 https://github.com/oso-gato.keys -o "$t" && [ -s "$t" ]; then
-        mv "$t" ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
-    else rm -f "$t"; fi'
+# ---- key-only ssh: core's authorized_keys -----------------------------------
+# NOT synced here: sshd.service's ExecStartPre drop-in (install-grd.sh) already
+# syncs from github.com/oso-gato.keys BEFORE sshd accepts a connection — it was
+# added precisely to close the first-boot keyless window, and fully subsumes a
+# second sync in this oneshot (which only doubled the boot-time GitHub dependency
+# and gave the one behavior two drift-prone implementations).
 
 # ---- tailnet join: Tailscale SSH + the fleet-tile uplink ---------------------
 # tailscaled runs as tailscaled.service (install-grd). Bring the node UP so (a) ssh/RDP

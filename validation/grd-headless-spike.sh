@@ -85,10 +85,11 @@ build_image() {
   if podman image exists "$IMG"; then log "image $IMG exists (set IMG= or 'podman rmi $IMG' to rebuild)"; return 0; fi
   log "building $IMG (minimal GNOME-$([ "$FED" = 44 ] && echo 50) + GRD + gdm; a few minutes)…"
   local cf pol rc; cf="$(mktemp)"; pol="$(mktemp)"
-  # Some hosts harden /etc/containers/policy.json to REJECT unsigned images (the
-  # fedora-desktop hosts require cosign-signed images). The upstream Fedora base used by
-  # this THROWAWAY spike is unsigned, so pass a permissive signature policy SCOPED TO
-  # THIS BUILD ONLY — the host's standing /etc/containers/policy.json is NOT modified.
+  # Some hosts harden /etc/containers/policy.json to REJECT unsigned images. The
+  # upstream Fedora base used by this THROWAWAY spike is unsigned, so pass a
+  # permissive signature policy SCOPED TO THIS BUILD ONLY — the host's standing
+  # /etc/containers/policy.json is NOT modified. (CI image signing was dropped as
+  # unenforced in #108 — no fleet host cosign-verifies.)
   printf '%s' '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker-daemon":{"":[{"type":"insecureAcceptAnything"}]}}}' > "$pol"
   cat > "$cf" <<EOF
 FROM registry.fedoraproject.org/fedora:${FED}
@@ -220,16 +221,37 @@ probe() {
   fi
 
   # Gate D: real RDP client -> NLA handshake + NON-BLACK frame
-  probe_paint "$v" "$od"
+  probe_paint "$v" "$od" "$ct"
 
-  # Gate E (light): reconnect resumes the SAME session
+  # Gate E: a REAL second RDP connect lands on the SAME logind session (resume).
+  # (The old check only compared the session id before/after a 2s sleep — it never
+  # reconnected anything, so it proved survival-of-idle, not resume. This one
+  # drives a fresh freerdp connect after the Gate-D client was killed and asserts
+  # core still has exactly the ORIGINAL graphical session — same id, no fork.)
   if [ "${RESULT["$v:D"]:-}" = PASS ]; then
-    local sid1 sid2
+    local sid1 sid2 nsess frdp
     sid1=$(awk '/core/{print $1; exit}' "$od/loginctl.txt" 2>/dev/null)
-    sleep 2; xc "$ct" loginctl list-sessions > "$od/loginctl-2.txt" 2>&1 || true
-    sid2=$(awk '/core/{print $1; exit}' "$od/loginctl-2.txt" 2>/dev/null)
-    if [ -n "$sid1" ] && [ "$sid1" = "$sid2" ]; then RESULT["$v:E"]=PASS; log "[$v] Gate E: session persists across reconnect (id=$sid1)"
-    else RESULT["$v:E"]=SKIP; warn "[$v] Gate E: could not confirm session-id stability"; fi
+    frdp=$(command -v xfreerdp3 || command -v xfreerdp || command -v sdl-freerdp || true)
+    Xvfb :98 -screen 0 1280x720x24 >/dev/null 2>&1 & local xpid2=$!
+    sleep 1
+    DISPLAY=:98 "$frdp" /v:127.0.0.1:"$HOSTPORT" /u:core /p:"$TESTPW" /cert:ignore /sec:nla \
+        /size:1280x720 ${GFX_TWEAK:-} > "$od/freerdp-reconnect.log" 2>&1 & local rpid2=$!
+    sleep 10; kill "$rpid2" "$xpid2" >/dev/null 2>&1
+    # The reconnect must have actually CONNECTED — same-sid + no-fork also holds
+    # trivially when the client never reached the server, which would fake a PASS.
+    if ! grep -qiE 'connected to|negotiat|channel|licens|surface|gfx' "$od/freerdp-reconnect.log"; then
+      RESULT["$v:E"]=FAIL
+      warn "[$v] Gate E: the reconnect client shows NO connect evidence (see freerdp-reconnect.log) — cannot claim resume"
+    else
+      xc "$ct" loginctl list-sessions > "$od/loginctl-2.txt" 2>&1 || true
+      sid2=$(awk '/core/{print $1; exit}' "$od/loginctl-2.txt" 2>/dev/null)
+      nsess=$(grep -c ' core ' "$od/loginctl-2.txt" 2>/dev/null); nsess=${nsess:-0}
+      if [ -n "$sid1" ] && [ "$sid1" = "$sid2" ] && [ "$nsess" -le 1 ]; then
+        RESULT["$v:E"]=PASS; log "[$v] Gate E: reconnect RESUMED the same session (id=$sid1, no fork)"
+      else
+        RESULT["$v:E"]=FAIL; warn "[$v] Gate E: reconnect did NOT resume (sid1=$sid1 sid2=$sid2 core-sessions=$nsess)"
+      fi
+    fi
   else RESULT["$v:E"]=SKIP; fi
 
   podman logs "$ct" > "$od/container.log" 2>&1 || true
@@ -238,7 +260,7 @@ probe() {
 
 # Gate D — automated paint check via freerdp+Xvfb+ImageMagick, else manual fallback
 probe_paint() {
-  local v="$1" od="$2"
+  local v="$1" od="$2" ct="$3"
   local frdp xvfb im
   frdp=$(command -v xfreerdp3 || command -v xfreerdp || command -v sdl-freerdp || true)
   xvfb=$(command -v Xvfb || true); im=$(command -v import || true)
@@ -267,7 +289,9 @@ probe_paint() {
   echo "$sd" > "$od/frame-stddev.txt"
   # Pull the GRD daemon's OWN post-connect log from inside the container — catches a
   # crash-on-connect, which presents to the client as a black frame / disconnect.
-  podman exec "$2" journalctl --no-pager _UID=1000 > "$od/session-journal.txt" 2>/dev/null || true
+  # ($ct = the container handle; this used to pass "$2" — the OUTPUT DIR — so the
+  # journal was always empty and the crash branch below could never fire.)
+  podman exec "$ct" journalctl --no-pager _UID=1000 > "$od/session-journal.txt" 2>/dev/null || true
   local grd_crash=0
   grep -qiE 'gnome-remote-desktop.*(code=dumped|status=6/ABRT|core-dump)' "$od/session-journal.txt" && grd_crash=1
   if awk "BEGIN{exit !($sd > 0.02)}"; then

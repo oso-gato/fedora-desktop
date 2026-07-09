@@ -16,11 +16,13 @@
 #       vault. Only ONE input file is staged IN (read-only) and ONE output path
 #       staged OUT. NEVER $HOME, ~/.config, ~/.ssh, the gh/vault tokens, the
 #       rclone config, or the vault directory.
-#     * NO network egress by default (--network none). A strict single-host
-#       allowlist is opt-in (INGEST_ALLOW_HOST) for the fetch/transcribe step
-#       only, and is the ONLY way any byte leaves the sandbox.
-#     * Throwaway: `podman run --rm` (or a fresh bwrap each call). Nothing
-#       persists; a compromise dies with the container.
+#     * NO network egress, period — the sandbox namespace has no interface.
+#       (An egress mode was removed as theatre: podman cannot start at this
+#       nesting depth, bwrap has no NAT, and the old podman path's "single-host
+#       allowlist" was trust-the-command, not an enforced boundary. Fetch
+#       OUTSIDE the sandbox, then stage the fetched FILE in.)
+#     * Throwaway: a fresh bwrap each call. Nothing persists; a compromise
+#       dies with the sandbox.
 #   If a malicious input hijacks the parser here, there is no credential to
 #   steal, no full vault to read, and (default) no way to phone home. The
 #   small, boring orchestrator that LATER writes the sanitized note into the
@@ -34,11 +36,10 @@
 #     CMD ARGS           the parse/transcribe command to run INSIDE the sandbox,
 #                        referencing /in/input and /out/output (NOT host paths)
 #   Options:
-#     --image NAME       OCI image for the nested run (default: fedora:44 baked)
-#     --allow-host HOST  permit egress to exactly this host:443 (else no network)
 #     --timeout SECS     hard wall-clock kill (default 300)
-#     --bwrap            force the bwrap fallback instead of nested podman
-#   Env equivalents: INGEST_IMAGE, INGEST_ALLOW_HOST, INGEST_TIMEOUT.
+#   Env equivalent: INGEST_TIMEOUT.
+#   (--image / --allow-host / --bwrap were removed with the dead podman path;
+#    --allow-host now fails fast — no supported egress exists in-container.)
 #
 # EXAMPLE (transcribe one audio file with a tool that lives in the image):
 #   ingest-sandbox.sh --in /tmp/clip.m4a --out /tmp/note.md -- \
@@ -50,10 +51,7 @@ log()  { printf '%s [ingest-sandbox] %s\n' "$(date -Iseconds)" "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
 
 # ---- defaults ---------------------------------------------------------------
-INGEST_IMAGE="${INGEST_IMAGE:-registry.fedoraproject.org/fedora:44}"
-INGEST_ALLOW_HOST="${INGEST_ALLOW_HOST:-}"
 INGEST_TIMEOUT="${INGEST_TIMEOUT:-300}"
-USE_BWRAP=0
 IN_FILE=""
 OUT_FILE=""
 
@@ -62,10 +60,9 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --in)         IN_FILE="$2"; shift 2 ;;
         --out)        OUT_FILE="$2"; shift 2 ;;
-        --image)      INGEST_IMAGE="$2"; shift 2 ;;
-        --allow-host) INGEST_ALLOW_HOST="$2"; shift 2 ;;
         --timeout)    INGEST_TIMEOUT="$2"; shift 2 ;;
-        --bwrap)      USE_BWRAP=1; shift ;;
+        --allow-host|--image|--bwrap)
+                      die "egress/podman modes were removed (podman cannot start at this nesting depth; bwrap has no NAT; the old 'allowlist' was not an enforced boundary). Fetch OUTSIDE the sandbox and stage the file with --in." ;;
         --)           shift; break ;;
         -*)           die "unknown option: $1" ;;
         *)            break ;;
@@ -108,68 +105,20 @@ done
 
 log "input  (ro): $IN_ABS  -> /in/input"
 log "output (rw): $OUT_ABS  -> /out/output"
-log "network    : ${INGEST_ALLOW_HOST:-NONE (isolated)}"
+log "network    : NONE (isolated)"
 log "timeout    : ${INGEST_TIMEOUT}s"
 
 # =============================================================================
-# PRIMARY: throwaway nested rootless podman (via CONTAINER_HOST)
+# bwrap (unprivileged user-namespace sandbox) — the ONLY path in this nested box
 # =============================================================================
-# Why podman first: it gives a full mount/pid/user namespace + a real network
-# namespace we can set to `none`, and `--rm` guarantees no residue. The engine
-# is fedora-desktop's own rootless podman (CONTAINER_HOST), one level of nesting
-# — the same engine the maintainer-dev workflow already uses. We mount ONLY the
-# two files; $HOME, the vault, and every token stay outside the container's
-# entire view.
-run_podman() {
-    command -v podman >/dev/null 2>&1 || return 127
-
-    local -a netargs
-    if [ -n "$INGEST_ALLOW_HOST" ]; then
-        # Opt-in egress: give it a network but rely on the fetch CMD targeting
-        # ONLY $INGEST_ALLOW_HOST. (Hard per-host firewalling inside a rootless
-        # netns is not portable here; the allowlist is enforced by passing the
-        # host to the CMD as its sole target + auditing the CMD. Default path
-        # below is the strong guarantee: NO network at all.)
-        log "WARNING: egress enabled to '$INGEST_ALLOW_HOST' — the CMD MUST target only that host"
-        netargs=(--network slirp4netns)
-    else
-        netargs=(--network none)
-    fi
-
-    # --rm throwaway; drop all caps + no-new-privileges; read-only rootfs with a
-    # small tmpfs for scratch; the two single-file binds are the ONLY shared FS.
-    timeout --signal=KILL "$INGEST_TIMEOUT" \
-    podman run --rm \
-        "${netargs[@]}" \
-        --cap-drop=ALL \
-        --security-opt=no-new-privileges \
-        --read-only \
-        --tmpfs /tmp:rw,nosuid,nodev,size=512m \
-        --tmpfs /out-scratch:rw,nosuid,nodev,size=512m \
-        --pids-limit=256 \
-        --memory=2g \
-        -v "$IN_ABS":/in/input:ro \
-        -v "$OUT_ABS":/out/output:rw,Z \
-        --workdir /tmp \
-        --entrypoint "" \
-        "$INGEST_IMAGE" \
-        "$@"
-}
-
-# =============================================================================
-# bwrap (unprivileged user-namespace sandbox) — the DEFAULT in this nested box
-# =============================================================================
-# Why bwrap is the default here (verified live 2026-06-20): this box's `podman`
-# is a REMOTE client driving fedora-dev's engine, which itself runs in a nested
-# rootless user namespace where `/proc/sys/net` is read-only and owned by
-# `nobody`. Rootless podman UNCONDITIONALLY writes `net.ipv4.ping_group_range`
-# during netns setup (independent of `default_sysctls`), and crun then fails:
-# `open /proc/sys/net/ipv4/ping_group_range: Read-only file system`. So even a
-# bare `podman run` cannot start at THIS nesting depth. bwrap, by contrast,
-# builds the sandbox directly with the kernel's userns/netns syscalls and does
-# NOT touch that sysctl, so it works. We therefore default to bwrap and only use
-# podman when explicitly NOT forced AND podman is genuinely usable (e.g. on a
-# host engine, or for the egress path).
+# Why bwrap (verified live 2026-06-20): rootless podman UNCONDITIONALLY writes
+# `net.ipv4.ping_group_range` during netns setup (independent of
+# `default_sysctls`), and at this nesting depth `/proc/sys/net` is read-only —
+# crun fails `open /proc/sys/net/ipv4/ping_group_range: Read-only file system`.
+# So even a bare `podman run` cannot start here. bwrap builds the sandbox
+# directly with the kernel's userns/netns syscalls and does NOT touch that
+# sysctl. (A ~60-line podman path + an egress "allowlist" that merely trusted
+# the command were removed as unreachable/theatre.)
 #
 # CONTAINMENT under bwrap:
 #   * --unshare-user/net/ipc/uts/cgroup  -> own NET namespace with NO interface
@@ -182,13 +131,8 @@ run_podman() {
 #     the rclone config are all absent); the two single-file binds are the ONLY
 #     shared data. The vault is never bound.
 #   * --die-with-parent: the sandbox dies if the orchestrator does (throwaway).
-# Egress (--allow-host) is NOT supported under bwrap (no NAT/slirp); request it
-# only on a host where the podman path is usable.
 run_bwrap() {
-    command -v bwrap >/dev/null 2>&1 || return 127
-    if [ -n "$INGEST_ALLOW_HOST" ]; then
-        die "egress (--allow-host) is not supported under bwrap (no NAT); run on a host where podman can start, with --allow-host"
-    fi
+    command -v bwrap >/dev/null 2>&1 || die "bwrap not available — cannot sandbox ingest"
     log "using bwrap sandbox (network fully isolated)"
     timeout --signal=KILL "$INGEST_TIMEOUT" \
     bwrap \
@@ -213,24 +157,8 @@ run_bwrap() {
 }
 
 # ---- dispatch ---------------------------------------------------------------
-# Default = bwrap (the path proven to start in this nested-rootless box). Use
-# podman only when egress is requested (--allow-host needs slirp) or when bwrap
-# is unavailable — and never when --bwrap is forced.
 rc=0
-if [ "$USE_BWRAP" -eq 1 ]; then
-    run_bwrap "$@" || rc=$?
-elif [ -n "$INGEST_ALLOW_HOST" ]; then
-    # Egress path: only podman can provide a NAT'd, single-host-targeted netns.
-    log "egress requested -> using podman (bwrap has no NAT)"
-    run_podman "$@" || rc=$?
-elif command -v bwrap >/dev/null 2>&1; then
-    run_bwrap "$@" || rc=$?
-elif command -v podman >/dev/null 2>&1; then
-    log "bwrap unavailable — using podman"
-    run_podman "$@" || rc=$?
-else
-    die "neither bwrap nor podman available — cannot sandbox ingest"
-fi
+run_bwrap "$@" || rc=$?
 
 if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     log "ingest TIMED OUT after ${INGEST_TIMEOUT}s and was killed"
