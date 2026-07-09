@@ -14,10 +14,12 @@
 #   GUAC_PW  (required) Guacamole web-login password
 #   RFB_PW   (optional) arms the :5900 same-session VNC mirror (tailnet-only)
 #   TS_AUTHKEY (optional) unattended tailnet join
-# Provide them as podman secrets (preferred) — `podman secret create
-# fedora-desktop-rdp-pw -` etc. — and mount them as env via the Secret= lines
-# below, OR via an operator-managed EnvironmentFile (NOT committed). The
-# entrypoint fails fast when RDP_PW or GUAC_PW is missing.
+# Provide them via podman secrets. PREFERRED: the single mount-secret run.sh
+# also uses (`printf 'RDP_PW=…\nGUAC_PW=…\n' | podman secret create
+# fedora-desktop-secrets -`, surfaced at /etc/fedora-desktop/secrets.env by the
+# Secret= line in [Container]). Alternatives: per-var env secrets or an
+# operator-managed EnvironmentFile (NOT committed) — the entrypoint has env
+# back-compat. It fails fast when RDP_PW or GUAC_PW is missing.
 
 [Unit]
 Description=fedora-desktop — XFCE remote workstation for the vault/wiki + maintainer dev

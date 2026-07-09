@@ -116,10 +116,13 @@ podman run -d --name fedora-desktop-grd \
 # --health-start-period 600s (was 90s): first boot legitimately runs the firstboot
 # oneshot to completion BEFORE Tomcat (Requires=firstboot) can serve :8443 — its
 # own budget is TimeoutStartSec=600 (up to 5 per-user session-bus polls @40s +
-# mariadb init/upgrade + tailscale retries). 90s marked a GOOD slow first boot
-# unhealthy → the host's digest-rollback reverted working deploys. Steady-state is
-# unaffected (start-period only defers failure-counting; the first passing check
-# still flips healthy immediately).
+# mariadb init/upgrade + tailscale retries). At 90s a GOOD slow multi-user first
+# boot reported (unhealthy) while provisioning correctly — a false status that
+# misleads operators, breaks any Notify=healthy-style readiness consumer, and
+# would trigger digest-rollback if grd is ever enrolled in the host refresh
+# harness (it is not today; xrdp's refresh-wired Quadlet keeps its own 60s).
+# Steady-state is unaffected (start-period only defers failure-counting; the
+# first passing check still flips healthy immediately).
 
 # ---- operator-facing access info (OUTPUT ONLY — no security flag / publish-set / device change) ----
 # Public IP for the web URL: prefer this host's routable source IP; ask api.ipify.org only when
