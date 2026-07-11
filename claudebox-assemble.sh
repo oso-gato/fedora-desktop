@@ -138,24 +138,13 @@ rm -f "$_law" "$_fc"
 podman exec claudebox cp \
     "/run/host$LIVE/policy/managed-settings.json" /etc/claude-code/managed-settings.json
 
-# Stamp the managed PreToolUse hooks too. managed-settings.json wires
-# /etc/claude-code/hooks/gate-push.sh as a Bash PreToolUse hook with
-# allowManagedHooksOnly:true — so the hook script MUST exist at that path or the
-# managed hook can't run (and a missing PreToolUse hook fails OPEN, defeating the
-# promotion gate). Copy the whole policy/hooks/ tree, normalise perms to 0755 so
-# each *.sh is executable regardless of the source/transport mode, and FAIL LOUDLY
-# if the gate hook didn't land (rather than boot a box whose gate is silently
-# absent). Hidden files (e.g. .gitkeep) are skipped by the *.sh chmod glob.
-echo "==== post-assemble: stamp managed PreToolUse hooks into the box ===="
-podman exec claudebox mkdir -p /etc/claude-code/hooks
-podman exec claudebox cp -a \
-    "/run/host$LIVE/policy/hooks/." /etc/claude-code/hooks/
-podman exec claudebox bash -c 'chmod 0755 /etc/claude-code/hooks/*.sh 2>/dev/null || true'
-podman exec claudebox test -x /etc/claude-code/hooks/gate-push.sh || {
-    echo "FATAL: promotion-gate hook /etc/claude-code/hooks/gate-push.sh missing or" \
-         "not executable after stamp — refusing to leave the box without its gate." >&2
-    exit 1
-}
+# UNSHACKLED (P0, 2026-07-11): the gate-push PreToolUse hook is RETIRED fleet-wide — policy/hooks/
+# no longer exists and managed-settings.json registers no PreToolUse hook. This box stays PR-only
+# STRUCTURALLY: the require-PR server ruleset on main + the `Bash(gh pr merge:*)` deny in
+# managed-settings.json. Remove any hooks dir a PREVIOUS stamp left so an already-deployed box
+# converges to the hook-free state on rebuild.
+echo "==== post-assemble: remove retired PreToolUse hooks (unshackle) ===="
+podman exec claudebox rm -rf /etc/claude-code/hooks
 
 # Mark assembled — entrypoint's first-boot guard checks this.
 touch "$HOME/.local/state/claudebox/.assembled"
