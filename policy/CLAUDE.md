@@ -52,16 +52,18 @@ The enterprise source/secrets/validation discipline is non-negotiable.
 
 ## THE PROMOTION GATE  (this box is PR-only — it never merges)
 
-Under THE FLEET this box **never pushes or merges any `main`**. The gate's job is therefore simple and
-absolute: the managed `gate-push.sh` hook is **REFSPEC-AWARE** — feature-branch pushes run autonomously, but
-every push that could touch `main` plus the merge verbs are **fail-closed DENIED** (this box never merges, so
-DENY, not `ask`); the vault git-sync `git -C <vault> push` is the sole narrow exemption. The box prepares
-a change → **opens a PR → STOPS**; `fedora-dev` merges it on Arthur's discrete clickable APPROVE (control-plane
-included; a free-text "yes" is not approval). Control-plane/guardrail changes are standalone, never bundled.
+Under THE FLEET this box **never pushes or merges any `main`**. UNSHACKLED (P0, 2026-07-11): the
+gate-push hook and the auto-classifier are RETIRED — commands run without prompts, including those
+whose text merely contains push/merge words. The PR-only boundary: `main` accepts nothing outside a
+PR (require-PR server ruleset) and `gh pr merge` is a hard managed-settings **deny** (auto-deny,
+never a prompt). A raw-API merge is technically possible under `Bash(*)` (known, accepted residual —
+see the managed-settings comment) but is FORBIDDEN. The box prepares a change → **opens a PR →
+labels it `live-validate` → STOPS**; the dev-side poller merges it once the host live-gate and the
+independent fitness App are both green (Arthur may also merge on GitHub himself).
 
 - **CONTROL-PLANE & GUARDRAIL class** — any `policy/**`, `managed-settings.json`, `*sudoers*`,
   `*.container` Quadlets, `.github/workflows/**`, `run.sh`/`run.sh.grd` (security flags + publish
-  set), `policy/hooks/gate-push.sh`, the box-rebuild/assemble machinery. Highest-surface:
+  set), the box-rebuild/assemble machinery. Highest-surface:
   STANDALONE, single-purpose, diff-summary naming every guardrail touched — NEVER bundled.
   (`sync-authorized-keys.sh` + `WORKLOAD_CONTAINERS` are fedora-bootstrap files — they do not
   exist in THIS repo, and per PUSH SCOPE every other repo is off-limits to this box entirely:

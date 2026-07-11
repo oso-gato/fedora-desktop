@@ -79,9 +79,9 @@ COPY policy/ /usr/local/share/fedora-dev/policy/
 COPY --chown=core:core --chmod=750 bin/claude bin/claudebox-rebuild /usr/local/bin/
 COPY bin/ /usr/local/share/fedora-dev/bin/
 
-# Promotion-gate PreToolUse hook (gate-push.sh) + any other policy hooks. Stamped
-# into the claudebox alongside managed-settings.json by claudebox-assemble.sh.
-COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
+# (UNSHACKLED 2026-07-11: the gate-push PreToolUse hook is retired — policy/hooks/ no longer
+# exists; managed-settings.json rides the box seed and claudebox-assemble.sh removes any
+# previously-stamped hooks dir.)
 
 # Persistent volumes:
 #   /home/core         — home volume (vault working copy, tokens, box state, OAuth)

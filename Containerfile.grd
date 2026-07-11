@@ -60,7 +60,6 @@ COPY policy/ /usr/local/share/fedora-dev/policy/
 # 0700 podman-socket dir backstopped it).
 COPY --chown=core:core --chmod=750 bin/claude bin/claudebox-rebuild /usr/local/bin/
 COPY bin/ /usr/local/share/fedora-dev/bin/
-COPY policy/hooks/ /usr/local/share/fedora-dev/policy/hooks/
 
 VOLUME ["/home/core", "/var/lib/tailscale", "/var/lib/guac-cert", "/var/lib/mysql"]
 
