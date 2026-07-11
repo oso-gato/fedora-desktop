@@ -1,11 +1,18 @@
 # fedora-desktop — Requirements
 
-**v3.1 — owner-approved 2026-07-11.** This document is the measuring stick: every design,
+**v3.2 — owner-approved 2026-07-11.** This document is the measuring stick: every design,
 build, validation, and ship decision in this repo is graded against it. It states WHAT must be
 observably true and contains no design decisions — no internal software names, no ports, no
 config keys. Those belong to the design layer (CLAUDE.md, README.md, the code), which must
 TRACE to this document but never constrains it. User-facing products, specifically selected
 tools, and standard protocols are named only where they ARE the requirement.
+
+**v3.2 folds in three owner decisions (2026-07-11):** (i) the VNC mirror covers **each** live
+session including workers, and the operator may observe worker sessions through it — a scoped
+carve-out to D2 (A7, D2). (ii) The admin uses **one** credential across all doors, like every
+worker — the previous admin split is retired (already required by A9/D2; recorded here to close
+the deviation). (iii) The platform is being **rebuilt zero-base from scratch**, using the prior
+implementation as reference only — a build-method ruling, not a requirements change.
 
 ## 1. Objective
 
@@ -52,7 +59,7 @@ requirements**. Both must ship: each lineage individually satisfies every requir
 | A4 | The public door **locks out brute force automatically** (repeated failed logins ⇒ temporary source ban). |
 | A5 | The public door is **encrypted in transit**; no credential ever crosses the network in the clear. |
 | A6 | The desktop is also reachable **natively via standard RDP** from the private network (interoperable with stock Windows/macOS/FreeRDP clients). |
-| A7 | The live session can optionally be mirrored **via standard VNC** from the private network, armed by an operator-supplied credential at deploy; not armed ⇒ no listener. **Applies to both lineages in full** — verification timelines differ only because one lineage must first build it. |
+| A7 | **Each** live session (the admin's and every worker's) can optionally be mirrored **via standard VNC** from the private network, armed by an operator-supplied credential at deploy; not armed ⇒ no listener. The operator may observe worker sessions through this mirror (see the D2 carve-out). **Applies to both lineages in full** — verification timelines differ only because one lineage must first build it. |
 | A8 | **Terminal access** from the private network: key-only SSH plus a roaming-resilient shell; every terminal login lands in one shared multiplexer session that follows the most recently active device and degrades cleanly across screen sizes. |
 | A9 | **One login, one desktop (SSO):** authenticating at any door lands the user on **their own** session without re-authenticating to a second layer; no user can reach another user's session. |
 | A10 | The browser door can host **per-user-granted terminal tiles to other fleet hosts** (over the private network). Grants are per-user, exact-match, fail-closed, and **revocation actually revokes**. An ungranted user sees nothing. |
@@ -78,7 +85,7 @@ requirements**. Both must ship: each lineage individually satisfies every requir
 | FR | Requirement |
 |---|---|
 | D1 | One always-present admin plus a **dynamic set of workers defined solely by the secret file** (§G): define N users ⇒ N are provisioned, with no code or configuration change. **Zero workers ⇒ behavior identical to a single-user box.** |
-| D2 | Per user: own credentials (one credential per user across doors, plus their own second factor), **own desktop session, own persistent home** — private from every other user, including workers vs the admin's data. |
+| D2 | Per user: own credentials (one credential per user across doors, plus their own second factor), **own desktop session, own persistent home** — private from every other **worker**, and workers' data private from each other. **Carve-out:** the operator/admin may observe worker sessions through the armed VNC mirror (A7) — an intentional supervisory exception, disclosed per E6; it does not grant workers any reach into each other or into the admin's data. |
 | D3 | **Workers hold no platform power by construction**: no admin escalation, no host or platform administration, no reach into any other user's home, session, or agent environment — enforced by mechanism, not policy prose. |
 | D4 | Optional **shared folder**: full read-write collaboration for all desktop users regardless of their file-creation defaults, without weakening private homes. |
 | D5 | Removing a user **disables** their web identity (preserving second-factor enrollment for reinstatement); a grant downgrade takes effect at next boot. |
@@ -179,4 +186,6 @@ dress-rehearsal items by nature.
   fedora-desktop repo itself — the inverse of H1/H2) — law/policy must be re-stamped to match.
 
 **Ship status:** lineage 1 (incumbent) passed the dress rehearsal 2026-06-25 against the
-pre-v3 bar; **neither lineage has yet shipped against THIS document.**
+pre-v3 bar; **neither lineage has yet shipped against THIS document.** Per the v3.2 build-method
+ruling, the platform is being rebuilt zero-base from scratch — the prior tree is reference only,
+and every file is re-derived from and re-justified against this document before it ships.
